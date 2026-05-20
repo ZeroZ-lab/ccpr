@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import * as p from "@clack/prompts";
@@ -383,7 +384,8 @@ Usage:
   ccx search <keyword>           Search plugins in marketplaces
   ccx <profile> add [plugin]     Add plugin to profile
   ccx <profile> remove [plugin]  Remove plugin from profile
-  ccx <profile> list             List plugins in profile`);
+  ccx <profile> list             List plugins in profile
+  ccx -v, --version              Show version`);
 }
 
 // ── Main ──────────────────────────────────────────────────
@@ -397,6 +399,13 @@ if (args.length === 0) {
 
 if (args[0] === "--help" || args[0] === "-h") {
   printHelp();
+  process.exit(0);
+}
+
+if (args[0] === "--version" || args[0] === "-v" || args[0] === "-V") {
+  const require = createRequire(import.meta.url);
+  const pkg = require("../package.json");
+  console.log(`ccx v${pkg.version}`);
   process.exit(0);
 }
 
