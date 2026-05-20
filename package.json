@@ -1,6 +1,6 @@
 {
   "name": "@guanmu/ccprofile",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Agent Profile Manager for Claude Code",
   "type": "module",
   "bin": {
@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "bun run src/index.ts",
+    "test": "pnpm run build && node test/cli.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
