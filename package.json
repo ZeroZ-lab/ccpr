@@ -1,10 +1,14 @@
 {
   "name": "@guanmu/ccprofile",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Agent Profile Manager for Claude Code",
   "type": "module",
   "bin": {
     "ccx": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZeroZ-lab/ccpr"
   },
   "files": [
     "dist"
