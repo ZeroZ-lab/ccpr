@@ -2,9 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import pc from "picocolors";
-import ora from "ora";
-import { select, input } from "@inquirer/prompts";
+import * as p from "@clack/prompts";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
 const MARKETPLACES_DIR = path.join(
@@ -25,7 +23,7 @@ function profilePath(name: string) {
 function readProfile(name: string) {
   const file = profilePath(name);
   if (!fs.existsSync(file)) {
-    console.error(pc.red(`Profile "${name}" not found.`));
+    p.log.error(`Profile "${name}" not found.`);
     process.exit(1);
   }
   return JSON.parse(fs.readFileSync(file, "utf-8"));
@@ -64,11 +62,11 @@ function getAllPlugins(): PluginEntry[] {
     );
     if (!fs.existsSync(file)) continue;
     const data = JSON.parse(fs.readFileSync(file, "utf-8"));
-    for (const p of data.plugins || []) {
+    for (const pl of data.plugins || []) {
       plugins.push({
-        name: p.name,
-        description: p.description || "",
-        category: p.category,
+        name: pl.name,
+        description: pl.description || "",
+        category: pl.category,
         marketplace: data.name,
       });
     }
@@ -80,36 +78,40 @@ function getAllPlugins(): PluginEntry[] {
 
 async function addProfile(name?: string) {
   if (!name) {
-    name = await input({ message: "Profile name:" });
+    name = (await p.text({
+      message: "Profile name:",
+    })) as string;
+    if (p.isCancel(name)) return;
   }
   const file = profilePath(name);
   if (fs.existsSync(file)) {
-    console.error(pc.red(`Profile "${name}" already exists.`));
-    process.exit(1);
+    p.log.error(`Profile "${name}" already exists.`);
+    return;
   }
   writeProfile(name, { name, plugins: [] });
-  console.log(pc.green(`Created profile "${name}".`));
+  p.log.success(`Created profile "${name}".`);
 }
 
 async function removeProfile(name?: string) {
   const names = getProfileNames();
   if (names.length === 0) {
-    console.log(pc.yellow("No profiles found."));
+    p.log.warn("No profiles found.");
     return;
   }
   if (!name) {
-    name = (await select({
+    name = (await p.select({
       message: "Select profile to remove:",
-      choices: names.map((n) => ({ name: n, value: n })),
+      options: names.map((n) => ({ value: n, label: n })),
     })) as string;
+    if (p.isCancel(name)) return;
   }
   const file = profilePath(name);
   if (!fs.existsSync(file)) {
-    console.error(pc.red(`Profile "${name}" not found.`));
-    process.exit(1);
+    p.log.error(`Profile "${name}" not found.`);
+    return;
   }
   fs.unlinkSync(file);
-  console.log(pc.green(`Removed profile "${name}".`));
+  p.log.success(`Removed profile "${name}".`);
 }
 
 async function listProfiles() {
@@ -118,17 +120,14 @@ async function listProfiles() {
     .readdirSync(PROFILES_DIR)
     .filter((f) => f.endsWith(".json"));
   if (files.length === 0) {
-    console.log(pc.yellow("No profiles found."));
+    p.log.warn("No profiles found.");
     return;
   }
-  console.log(pc.bold("Profiles:"));
   for (const f of files) {
     const data = JSON.parse(
       fs.readFileSync(path.join(PROFILES_DIR, f), "utf-8")
     );
-    console.log(
-      `  ${pc.cyan(data.name)}  ${pc.dim(`(${data.plugins.length} plugins)`)}`
-    );
+    p.log.success(`${data.name}  (${data.plugins.length} plugins)`);
   }
 }
 
@@ -137,107 +136,116 @@ async function addPlugin(profileName: string, plugin?: string) {
   if (!plugin) {
     const allPlugins = getAllPlugins();
     const available = allPlugins.filter(
-      (p) => !data.plugins.includes(p.name)
+      (pl) => !data.plugins.includes(pl.name)
     );
     if (available.length === 0) {
-      console.log(pc.yellow("All available plugins already added."));
+      p.log.warn("All available plugins already added.");
       return;
     }
-    const choices = [
-      ...available.map((p) => ({
-        name: `${pc.cyan(p.name)}  ${pc.dim(p.description.slice(0, 60))}  ${pc.dim(`[${p.marketplace}]`)}`,
-        value: p.name,
-        description: p.description,
-      })),
-      { name: pc.yellow("Enter URL manually..."), value: "__url__" },
-    ];
-    const selected = (await select({
+    const selected = await p.select({
       message: `Add plugin to "${profileName}":`,
-      choices,
-    })) as string;
+      options: [
+        ...available.map((pl) => ({
+          value: pl.name,
+          label: pl.name,
+          hint: pl.description.slice(0, 60),
+        })),
+        { value: "__url__", label: "Enter URL manually...", hint: "Input a GitHub URL or plugin name" },
+      ],
+    });
+    if (p.isCancel(selected)) return;
+
     if (selected === "__url__") {
-      plugin = await input({ message: "Plugin URL or name:" });
+      plugin = (await p.text({
+        message: "Plugin URL or name:",
+      })) as string;
+      if (p.isCancel(plugin)) return;
     } else {
-      plugin = selected;
+      plugin = selected as string;
     }
   }
   if (data.plugins.includes(plugin)) {
-    console.error(pc.yellow(`Plugin "${plugin}" already in profile.`));
+    p.log.warn(`Plugin "${plugin}" already in profile.`);
     return;
   }
   data.plugins.push(plugin);
   writeProfile(profileName, data);
-  console.log(pc.green(`Added "${plugin}" to profile "${profileName}".`));
+  p.log.success(`Added "${plugin}" to profile "${profileName}".`);
 }
 
 async function removePlugin(profileName: string, plugin?: string) {
   const data = readProfile(profileName);
   if (data.plugins.length === 0) {
-    console.log(pc.yellow("No plugins in this profile."));
+    p.log.warn("No plugins in this profile.");
     return;
   }
   if (!plugin) {
-    plugin = (await select({
+    plugin = (await p.select({
       message: `Remove plugin from "${profileName}":`,
-      choices: data.plugins.map((p: string) => ({ name: p, value: p })),
+      options: data.plugins.map((pl: string) => ({
+        value: pl,
+        label: pl,
+      })),
     })) as string;
+    if (p.isCancel(plugin)) return;
   }
   const idx = data.plugins.indexOf(plugin);
   if (idx === -1) {
-    console.error(pc.red(`Plugin "${plugin}" not found.`));
-    process.exit(1);
+    p.log.error(`Plugin "${plugin}" not found.`);
+    return;
   }
   data.plugins.splice(idx, 1);
   writeProfile(profileName, data);
-  console.log(pc.green(`Removed "${plugin}" from profile "${profileName}".`));
+  p.log.success(`Removed "${plugin}" from profile "${profileName}".`);
 }
 
 async function listPlugins(profileName: string) {
   const data = readProfile(profileName);
   if (data.plugins.length === 0) {
-    console.log(pc.yellow(`No plugins in profile "${profileName}".`));
+    p.log.warn(`No plugins in profile "${profileName}".`);
     return;
   }
-  console.log(pc.bold(`Plugins in "${profileName}":`));
-  for (const p of data.plugins) {
-    console.log(`  ${pc.cyan(p)}`);
+  for (const pl of data.plugins) {
+    p.log.success(pl);
   }
 }
 
 async function searchPlugins(keyword?: string) {
   if (!keyword) {
-    keyword = await input({ message: "Search plugins:" });
+    keyword = (await p.text({
+      message: "Search plugins:",
+    })) as string;
+    if (p.isCancel(keyword)) return;
   }
   const allPlugins = getAllPlugins();
   const lower = keyword.toLowerCase();
   const results = allPlugins.filter(
-    (p) =>
-      p.name.toLowerCase().includes(lower) ||
-      p.description.toLowerCase().includes(lower) ||
-      (p.category || "").toLowerCase().includes(lower)
+    (pl) =>
+      pl.name.toLowerCase().includes(lower) ||
+      pl.description.toLowerCase().includes(lower) ||
+      (pl.category || "").toLowerCase().includes(lower)
   );
   if (results.length === 0) {
-    console.log(pc.yellow(`No plugins matching "${keyword}".`));
+    p.log.warn(`No plugins matching "${keyword}".`);
     return;
   }
-  console.log(
-    pc.bold(`Found ${results.length} plugin(s) for "${keyword}":\n`)
-  );
-  // Group by marketplace
+
   const grouped = new Map<string, PluginEntry[]>();
-  for (const p of results) {
-    const list = grouped.get(p.marketplace) || [];
-    list.push(p);
-    grouped.set(p.marketplace, list);
+  for (const pl of results) {
+    const list = grouped.get(pl.marketplace) || [];
+    list.push(pl);
+    grouped.set(pl.marketplace, list);
   }
+
+  console.log(`\n  Found ${results.length} plugin(s) for "${keyword}":\n`);
   for (const [marketplace, plugins] of grouped) {
-    console.log(pc.bold(pc.dim(`  [${marketplace}]`)));
-    for (const p of plugins) {
+    console.log(`  [${marketplace}]`);
+    for (const pl of plugins) {
       const desc =
-        p.description.length > 70
-          ? p.description.slice(0, 67) + "..."
-          : p.description;
-      console.log(`    ${pc.cyan(p.name.padEnd(24))} ${pc.dim(desc)}`);
+        pl.description.length > 70
+          ? pl.description.slice(0, 67) + "..."
+          : pl.description;
+      console.log(`    ${pl.name.padEnd(24)} ${desc}`);
     }
     console.log();
   }
@@ -246,94 +254,104 @@ async function searchPlugins(keyword?: string) {
 async function executeProfile(profileName: string) {
   const data = readProfile(profileName);
   if (data.plugins.length === 0) {
-    console.log(pc.yellow(`No plugins to install in profile "${profileName}".`));
+    p.log.warn(`No plugins to install in profile "${profileName}".`);
     return;
   }
-  console.log(
-    pc.bold(
-      `Installing ${data.plugins.length} plugin(s) from profile "${profileName}"...\n`
-    )
-  );
+
+  const s = p.spinner();
+  s.start(`Installing ${data.plugins.length} plugin(s) from "${profileName}"...`);
+
+  let installed = 0;
+  let failed = 0;
   for (const plugin of data.plugins) {
-    const spinner = ora(`Installing ${pc.cyan(plugin)}...`).start();
+    s.message(`Installing ${plugin}...`);
     try {
       execSync(`claude plugin install ${plugin} --scope project`, {
         stdio: "pipe",
       });
-      spinner.succeed(`Installed ${pc.cyan(plugin)}`);
+      installed++;
     } catch {
-      spinner.fail(`Failed to install ${pc.red(plugin)}`);
+      failed++;
+      p.log.error(`Failed to install ${plugin}`);
     }
   }
-  console.log(pc.green("\nDone."));
+  s.stop(`${installed} installed${failed > 0 ? `, ${failed} failed` : ""}`);
+  p.log.success("Done.");
 }
 
 async function interactiveMode() {
-  const action = (await select({
+  p.intro("ccx — Agent Profile Manager");
+
+  const action = await p.select({
     message: "What do you want to do?",
-    choices: [
-      { name: "Install profile plugins", value: "install", description: "Run a profile to install its plugins" },
-      { name: "Add plugin to profile", value: "plugin-add", description: "Add a plugin to an existing profile" },
-      { name: "Remove plugin from profile", value: "plugin-remove", description: "Remove a plugin from a profile" },
-      { name: "List profile plugins", value: "plugin-list", description: "Show plugins in a profile" },
-      { name: "Create new profile", value: "add", description: "Create a new empty profile" },
-      { name: "Delete profile", value: "remove", description: "Remove a profile" },
-      { name: "List all profiles", value: "list", description: "Show all profiles" },
-      { name: "Search plugins", value: "search", description: "Search plugins in marketplaces" },
+    options: [
+      { value: "install", label: "Install profile plugins", hint: "Run a profile to install its plugins" },
+      { value: "plugin-add", label: "Add plugin to profile", hint: "Add a plugin to an existing profile" },
+      { value: "plugin-remove", label: "Remove plugin from profile", hint: "Remove a plugin from a profile" },
+      { value: "plugin-list", label: "List profile plugins", hint: "Show plugins in a profile" },
+      { value: "add", label: "Create new profile", hint: "Create a new empty profile" },
+      { value: "remove", label: "Delete profile", hint: "Remove a profile" },
+      { value: "list", label: "List all profiles", hint: "Show all profiles" },
+      { value: "search", label: "Search plugins", hint: "Search plugins in marketplaces" },
     ],
-  })) as string;
+  });
+  if (p.isCancel(action)) return;
 
   switch (action) {
     case "install": {
       const names = getProfileNames();
       if (names.length === 0) {
-        console.log(pc.yellow("No profiles found."));
+        p.log.warn("No profiles found.");
         return;
       }
-      const name = await select({
+      const name = await p.select({
         message: "Select profile to install:",
-        choices: names.map((n) => ({ name: n, value: n })),
+        options: names.map((n) => ({ value: n, label: n })),
       });
+      if (p.isCancel(name)) return;
       await executeProfile(name as string);
       break;
     }
     case "plugin-add": {
       const names = getProfileNames();
       if (names.length === 0) {
-        console.log(pc.yellow("No profiles found. Create one first."));
+        p.log.warn("No profiles found. Create one first.");
         return;
       }
-      const name = (await select({
+      const name = await p.select({
         message: "Select profile:",
-        choices: names.map((n) => ({ name: n, value: n })),
-      })) as string;
-      await addPlugin(name);
+        options: names.map((n) => ({ value: n, label: n })),
+      });
+      if (p.isCancel(name)) return;
+      await addPlugin(name as string);
       break;
     }
     case "plugin-remove": {
       const names = getProfileNames();
       if (names.length === 0) {
-        console.log(pc.yellow("No profiles found."));
+        p.log.warn("No profiles found.");
         return;
       }
-      const name = (await select({
+      const name = await p.select({
         message: "Select profile:",
-        choices: names.map((n) => ({ name: n, value: n })),
-      })) as string;
-      await removePlugin(name);
+        options: names.map((n) => ({ value: n, label: n })),
+      });
+      if (p.isCancel(name)) return;
+      await removePlugin(name as string);
       break;
     }
     case "plugin-list": {
       const names = getProfileNames();
       if (names.length === 0) {
-        console.log(pc.yellow("No profiles found."));
+        p.log.warn("No profiles found.");
         return;
       }
-      const name = (await select({
+      const name = await p.select({
         message: "Select profile:",
-        choices: names.map((n) => ({ name: n, value: n })),
-      })) as string;
-      await listPlugins(name);
+        options: names.map((n) => ({ value: n, label: n })),
+      });
+      if (p.isCancel(name)) return;
+      await listPlugins(name as string);
       break;
     }
     case "add":
@@ -349,21 +367,23 @@ async function interactiveMode() {
       await searchPlugins();
       break;
   }
+
+  p.outro("Done.");
 }
 
 function printHelp() {
-  console.log(`${pc.bold("ccx")} — Agent Profile Manager for Claude Code
+  console.log(`ccx — Agent Profile Manager for Claude Code
 
-${pc.bold("Usage:")}
-  ${pc.cyan("ccx")}                           Interactive mode
-  ${pc.cyan("ccx")} <profile>                  Install all plugins from profile
-  ${pc.cyan("ccx add")} <name>                 Create a new profile
-  ${pc.cyan("ccx remove")} <name>              Remove a profile
-  ${pc.cyan("ccx list")}                       List all profiles
-  ${pc.cyan("ccx search")} <keyword>           Search plugins in marketplaces
-  ${pc.cyan("ccx <profile> add")} [plugin]     Add plugin to profile
-  ${pc.cyan("ccx <profile> remove")} [plugin]  Remove plugin from profile
-  ${pc.cyan("ccx <profile> list")}             List plugins in profile`);
+Usage:
+  ccx                           Interactive mode
+  ccx <profile>                  Install all plugins from profile
+  ccx add <name>                 Create a new profile
+  ccx remove <name>              Remove a profile
+  ccx list                       List all profiles
+  ccx search <keyword>           Search plugins in marketplaces
+  ccx <profile> add [plugin]     Add plugin to profile
+  ccx <profile> remove [plugin]  Remove plugin from profile
+  ccx <profile> list             List plugins in profile`);
 }
 
 // ── Main ──────────────────────────────────────────────────
@@ -412,7 +432,7 @@ switch (cmd) {
     } else if (sub === "list") {
       listPlugins(profileName);
     } else {
-      console.error(pc.red(`Unknown command: ccx ${args.join(" ")}`));
+      console.error(`Unknown command: ccx ${args.join(" ")}`);
       printHelp();
       process.exit(1);
     }
