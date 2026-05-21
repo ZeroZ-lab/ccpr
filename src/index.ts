@@ -297,10 +297,32 @@ async function addPlugin(profileName: string, plugin?: string) {
       p.log.warn("All available plugins already added.");
       return;
     }
+
+    let filtered = available;
+    if (available.length > 10) {
+      const query = (await p.text({
+        message: `Search plugins (leave empty to list all):`,
+      })) as string;
+      if (p.isCancel(query)) return;
+      const q = query.trim().toLowerCase();
+      if (q) {
+        filtered = available.filter(
+          (pl) =>
+            pl.name.toLowerCase().includes(q) ||
+            pl.description.toLowerCase().includes(q) ||
+            (pl.category && pl.category.toLowerCase().includes(q)),
+        );
+        if (filtered.length === 0) {
+          p.log.warn(`No plugins matching "${query.trim()}".`);
+          return;
+        }
+      }
+    }
+
     const selected = await p.select({
       message: `Add plugin to "${profileName}":`,
       options: [
-        ...available.map((pl) => ({
+        ...filtered.map((pl) => ({
           value: pl.name,
           label: pl.name,
           hint: pl.description.slice(0, 60),
@@ -553,26 +575,13 @@ async function marketplaceWizard(): Promise<WizardResult> {
   }
 }
 
-const CCX_LOGO = [
-  "   ██████╗██████╗",
-  "  ██╔════╝██╔══██╗",
-  "  ██║     ██████╔╝",
-  "  ██║     ██╔══██╗",
-  "  ╚██████╗██║  ██║",
-  "   ╚═════╝╚═╝  ╚═╝",
-];
-
 function printBanner() {
   const require = createRequire(import.meta.url);
   const pkg = require("../package.json");
 
-  console.log();
-  CCX_LOGO.forEach((line) => console.log(pc.bold(pc.magenta(line))));
-  console.log();
-  console.log(
-    pc.dim("  ") + pc.italic(pc.white("Agent Profile Manager")) + pc.dim("  ") + pc.gray(`v${pkg.version}`),
+  p.note(
+    pc.bold("ccx") + pc.dim(" — Agent Profile Manager  ") + pc.gray(`v${pkg.version}`),
   );
-  console.log();
 }
 
 async function interactiveMode() {
