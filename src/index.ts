@@ -190,6 +190,23 @@ function missingArg(message: string, usage: string) {
   process.exitCode = 1;
 }
 
+type WizardResult = "back" | "exit";
+
+async function selectProfile(message: string) {
+  const names = getProfileNames();
+  if (names.length === 0) {
+    p.log.warn("No profiles found.");
+    return undefined;
+  }
+
+  const name = await p.select({
+    message,
+    options: names.map((n) => ({ value: n, label: n })),
+  });
+  if (p.isCancel(name)) return undefined;
+  return name as string;
+}
+
 // ── Commands ──────────────────────────────────────────────
 
 async function addProfile(name?: string) {
@@ -439,6 +456,102 @@ async function executeProfile(profileName: string) {
   p.log.success("Done.");
 }
 
+async function installWizard(): Promise<WizardResult> {
+  while (true) {
+    const action = await p.select({
+      message: "Install",
+      options: [
+        { value: "install", label: "Install profile plugins", hint: "Run a profile" },
+        { value: "back", label: "Back" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(action) || action === "exit") return "exit";
+    if (action === "back") return "back";
+
+    const name = await selectProfile("Select profile to install:");
+    if (name) await executeProfile(name);
+  }
+}
+
+async function profilesWizard(): Promise<WizardResult> {
+  while (true) {
+    const action = await p.select({
+      message: "Profiles",
+      options: [
+        { value: "create", label: "Create profile", hint: "Create a new empty profile" },
+        { value: "list", label: "List profiles", hint: "Show all profiles" },
+        { value: "delete", label: "Delete profile", hint: "Remove a profile" },
+        { value: "back", label: "Back" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(action) || action === "exit") return "exit";
+    if (action === "back") return "back";
+
+    switch (action) {
+      case "create":
+        await addProfile();
+        break;
+      case "list":
+        await listProfiles();
+        break;
+      case "delete":
+        await removeProfile();
+        break;
+    }
+  }
+}
+
+async function pluginsWizard(): Promise<WizardResult> {
+  while (true) {
+    const action = await p.select({
+      message: "Plugins",
+      options: [
+        { value: "add", label: "Add plugin to profile", hint: "Choose a profile, then a plugin" },
+        { value: "remove", label: "Remove plugin from profile", hint: "Choose a profile, then a plugin" },
+        { value: "list", label: "List profile plugins", hint: "Show plugins in a profile" },
+        { value: "back", label: "Back" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(action) || action === "exit") return "exit";
+    if (action === "back") return "back";
+
+    const name = await selectProfile("Select profile:");
+    if (!name) continue;
+
+    switch (action) {
+      case "add":
+        await addPlugin(name);
+        break;
+      case "remove":
+        await removePlugin(name);
+        break;
+      case "list":
+        await listPlugins(name);
+        break;
+    }
+  }
+}
+
+async function marketplaceWizard(): Promise<WizardResult> {
+  while (true) {
+    const action = await p.select({
+      message: "Marketplace",
+      options: [
+        { value: "search", label: "Search plugins", hint: "Search installed marketplaces" },
+        { value: "back", label: "Back" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(action) || action === "exit") return "exit";
+    if (action === "back") return "back";
+
+    await searchPlugins();
+  }
+}
+
 async function interactiveMode() {
   if (!canPrompt()) {
     printNonInteractiveHelp();
@@ -448,90 +561,40 @@ async function interactiveMode() {
 
   p.intro("ccx — Agent Profile Manager");
 
-  const action = await p.select({
-    message: "What do you want to do?",
-    options: [
-      { value: "install", label: "Install profile plugins", hint: "Run a profile to install its plugins" },
-      { value: "plugin-add", label: "Add plugin to profile", hint: "Add a plugin to an existing profile" },
-      { value: "plugin-remove", label: "Remove plugin from profile", hint: "Remove a plugin from a profile" },
-      { value: "plugin-list", label: "List profile plugins", hint: "Show plugins in a profile" },
-      { value: "add", label: "Create new profile", hint: "Create a new empty profile" },
-      { value: "remove", label: "Delete profile", hint: "Remove a profile" },
-      { value: "list", label: "List all profiles", hint: "Show all profiles" },
-      { value: "search", label: "Search plugins", hint: "Search plugins in marketplaces" },
-    ],
-  });
-  if (p.isCancel(action)) return;
+  let shouldExit = false;
+  while (!shouldExit) {
+    const area = await p.select({
+      message: "Choose area:",
+      options: [
+        { value: "install", label: "Install", hint: "Run a profile" },
+        { value: "profiles", label: "Profiles", hint: "Create, list, or delete profiles" },
+        { value: "plugins", label: "Plugins", hint: "Manage plugins inside profiles" },
+        { value: "marketplace", label: "Marketplace", hint: "Search available plugins" },
+        { value: "help", label: "Help", hint: "Show command usage" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(area) || area === "exit") break;
 
-  switch (action) {
-    case "install": {
-      const names = getProfileNames();
-      if (names.length === 0) {
-        p.log.warn("No profiles found.");
-        return;
-      }
-      const name = await p.select({
-        message: "Select profile to install:",
-        options: names.map((n) => ({ value: n, label: n })),
-      });
-      if (p.isCancel(name)) return;
-      await executeProfile(name as string);
-      break;
+    let result: WizardResult = "back";
+    switch (area) {
+      case "install":
+        result = await installWizard();
+        break;
+      case "profiles":
+        result = await profilesWizard();
+        break;
+      case "plugins":
+        result = await pluginsWizard();
+        break;
+      case "marketplace":
+        result = await marketplaceWizard();
+        break;
+      case "help":
+        printHelp();
+        break;
     }
-    case "plugin-add": {
-      const names = getProfileNames();
-      if (names.length === 0) {
-        p.log.warn("No profiles found. Create one first.");
-        return;
-      }
-      const name = await p.select({
-        message: "Select profile:",
-        options: names.map((n) => ({ value: n, label: n })),
-      });
-      if (p.isCancel(name)) return;
-      await addPlugin(name as string);
-      break;
-    }
-    case "plugin-remove": {
-      const names = getProfileNames();
-      if (names.length === 0) {
-        p.log.warn("No profiles found.");
-        return;
-      }
-      const name = await p.select({
-        message: "Select profile:",
-        options: names.map((n) => ({ value: n, label: n })),
-      });
-      if (p.isCancel(name)) return;
-      await removePlugin(name as string);
-      break;
-    }
-    case "plugin-list": {
-      const names = getProfileNames();
-      if (names.length === 0) {
-        p.log.warn("No profiles found.");
-        return;
-      }
-      const name = await p.select({
-        message: "Select profile:",
-        options: names.map((n) => ({ value: n, label: n })),
-      });
-      if (p.isCancel(name)) return;
-      await listPlugins(name as string);
-      break;
-    }
-    case "add":
-      await addProfile();
-      break;
-    case "remove":
-      await removeProfile();
-      break;
-    case "list":
-      await listProfiles();
-      break;
-    case "search":
-      await searchPlugins();
-      break;
+    shouldExit = result === "exit";
   }
 
   p.outro("Done.");
