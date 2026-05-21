@@ -13,6 +13,7 @@ const MARKETPLACES_DIR = path.join(
   "plugins",
   "marketplaces"
 );
+const PROJECT_CONFIG_FILE = ".ccx.json";
 
 function ensureProfilesDir() {
   fs.mkdirSync(PROFILES_DIR, { recursive: true });
@@ -107,6 +108,49 @@ function writeProfile(name: string, data: ProfileData) {
   fs.writeFileSync(
     profilePath(normalized),
     JSON.stringify({ ...data, name: normalized }, null, 2) + "\n"
+  );
+}
+
+function readProjectConfig(): string[] {
+  const file = path.join(process.cwd(), PROJECT_CONFIG_FILE);
+  if (!fs.existsSync(file)) {
+    p.log.error(`No ${PROJECT_CONFIG_FILE} found. Run \`ccx init\` to create one.`);
+    process.exit(1);
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    p.log.error(`Invalid ${PROJECT_CONFIG_FILE}. Expected valid JSON.`);
+    process.exit(1);
+  }
+
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray((data as { plugins?: unknown }).plugins)
+  ) {
+    p.log.error(`Invalid ${PROJECT_CONFIG_FILE}. Expected a plugins array.`);
+    process.exit(1);
+  }
+
+  const plugins = (data as { plugins: unknown[] }).plugins.map((plugin) =>
+    typeof plugin === "string" ? plugin.trim() : undefined
+  );
+
+  if (plugins.some((plugin) => !plugin)) {
+    p.log.error(`Invalid ${PROJECT_CONFIG_FILE}. Plugin entries must be non-empty strings.`);
+    process.exit(1);
+  }
+
+  return plugins as string[];
+}
+
+function writeProjectConfig(plugins: string[]) {
+  fs.writeFileSync(
+    path.join(process.cwd(), PROJECT_CONFIG_FILE),
+    JSON.stringify({ plugins }, null, 2) + "\n"
   );
 }
 
@@ -483,22 +527,13 @@ async function browsePlugins(currentProfile?: string): Promise<string[]> {
   return [];
 }
 
-async function executeProfile(profileName: string) {
-  const normalizedProfileName = normalizeProfileName(profileName);
-  if (!normalizedProfileName) return;
-
-  const data = readProfile(normalizedProfileName);
-  if (data.plugins.length === 0) {
-    p.log.warn(`No plugins to install in profile "${normalizedProfileName}".`);
-    return;
-  }
-
+async function installPlugins(plugins: string[], label: string) {
   const s = p.spinner();
-  s.start(`Installing ${data.plugins.length} plugin(s) from "${normalizedProfileName}"...`);
+  s.start(`Installing ${plugins.length} plugin(s) from "${label}"...`);
 
   let installed = 0;
   let failed = 0;
-  for (const plugin of data.plugins) {
+  for (const plugin of plugins) {
     s.message(`Installing ${plugin}...`);
     try {
       execFileSync("claude", ["plugin", "install", plugin, "--scope", "project"], {
@@ -512,6 +547,124 @@ async function executeProfile(profileName: string) {
   }
   s.stop(`${installed} installed${failed > 0 ? `, ${failed} failed` : ""}`);
   p.log.success("Done.");
+}
+
+async function executeProfile(profileName: string) {
+  const normalizedProfileName = normalizeProfileName(profileName);
+  if (!normalizedProfileName) return;
+
+  const data = readProfile(normalizedProfileName);
+  if (data.plugins.length === 0) {
+    p.log.warn(`No plugins to install in profile "${normalizedProfileName}".`);
+    return;
+  }
+
+  await installPlugins(data.plugins, normalizedProfileName);
+}
+
+async function executeProjectConfig() {
+  const file = path.join(process.cwd(), PROJECT_CONFIG_FILE);
+  if (!fs.existsSync(file)) {
+    p.log.error(`No ${PROJECT_CONFIG_FILE} found. Run \`ccx init\` to create one.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const plugins = readProjectConfig();
+  if (plugins.length === 0) {
+    p.log.warn(`No plugins in ${PROJECT_CONFIG_FILE}.`);
+    return;
+  }
+
+  await installPlugins(plugins, PROJECT_CONFIG_FILE);
+}
+
+async function initProjectConfig() {
+  if (!canPrompt()) {
+    console.error("ccx init requires a TTY.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const file = path.join(process.cwd(), PROJECT_CONFIG_FILE);
+  if (fs.existsSync(file)) {
+    const overwrite = await p.confirm({
+      message: `${PROJECT_CONFIG_FILE} already exists. Overwrite?`,
+      initialValue: false,
+    });
+    if (p.isCancel(overwrite) || !overwrite) return;
+  }
+
+  const allPlugins = getAllPlugins();
+  let selected: string[];
+
+  if (allPlugins.length === 0) {
+    const input = (await p.text({
+      message: "No marketplace plugins found. Enter plugin names (comma-separated):",
+      placeholder: "plugin-a, plugin-b",
+    })) as string;
+    if (p.isCancel(input)) return;
+    selected = input.split(",").map((s: string) => s.trim()).filter(Boolean);
+  } else {
+    let filtered = allPlugins;
+    if (allPlugins.length > 10) {
+      const query = (await p.text({
+        message: "Search plugins (leave empty to list all):",
+      })) as string;
+      if (p.isCancel(query)) return;
+      const q = query.trim().toLowerCase();
+      if (q) {
+        filtered = allPlugins.filter(
+          (pl) =>
+            pl.name.toLowerCase().includes(q) ||
+            pl.description.toLowerCase().includes(q) ||
+            (pl.category && pl.category.toLowerCase().includes(q)),
+        );
+        if (filtered.length === 0) {
+          p.log.warn(`No plugins matching "${query.trim()}".`);
+          return;
+        }
+      }
+    }
+
+    const picked = await p.multiselect({
+      message: "Select plugins for this project:",
+      options: filtered.map((pl) => ({
+        value: pl.name,
+        label: pl.name,
+        hint: pl.description.slice(0, 50),
+      })),
+      required: false,
+    });
+    if (p.isCancel(picked)) return;
+    selected = picked as string[];
+  }
+
+  writeProjectConfig(selected);
+  p.log.success(`Created ${PROJECT_CONFIG_FILE} with ${selected.length} plugin(s).`);
+}
+
+function syncProjectConfig() {
+  const pluginsDir = path.join(process.cwd(), ".claude", "plugins");
+  if (!fs.existsSync(pluginsDir)) {
+    p.log.warn("No project plugins found (.claude/plugins/).");
+    return;
+  }
+
+  const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+  const plugins = entries
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .filter((name) => !name.startsWith("."))
+    .sort();
+
+  if (plugins.length === 0) {
+    p.log.warn("No project plugins found (.claude/plugins/).");
+    return;
+  }
+
+  writeProjectConfig(plugins);
+  p.log.success(`Synced ${plugins.length} plugin(s) to ${PROJECT_CONFIG_FILE}.`);
 }
 
 function printBanner() {
@@ -606,6 +759,9 @@ function printHelp() {
 Usage:
   ccx                            Interactive mode (TTY only)
   ccx ui                         Interactive mode (TTY only)
+  ccx init                       Create .ccx.json for current project
+  ccx sync                       Sync installed plugins to .ccx.json
+  ccx install                    Install plugins from .ccx.json
   ccx install <profile>          Install all plugins from profile
   ccx create <name>              Create a new profile
   ccx delete <name>              Remove a profile
@@ -647,6 +803,14 @@ async function main(args: string[]) {
   const cmd = args[0];
 
   switch (cmd) {
+    case "init":
+      await initProjectConfig();
+      break;
+
+    case "sync":
+      syncProjectConfig();
+      break;
+
     case "ui":
     case "tui":
     case "interactive":
@@ -655,7 +819,7 @@ async function main(args: string[]) {
 
     case "install":
       if (!args[1]) {
-        missingArg("Profile name is required.", "ccx install <profile>");
+        await executeProjectConfig();
         return;
       }
       await executeProfile(args[1]);

@@ -7,9 +7,9 @@ import { spawnSync } from "node:child_process";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const bin = path.join(repoRoot, "dist", "index.js");
 
-function run(args, home) {
+function run(args, home, cwd) {
   return spawnSync(process.execPath, [bin, ...args], {
-    cwd: repoRoot,
+    cwd: cwd || repoRoot,
     env: {
       ...process.env,
       HOME: home,
@@ -103,4 +103,49 @@ withHome((home) => {
   const legacyPlugins = run(["dev", "list"], home);
   assert.equal(legacyPlugins.status, 0);
   assert.match(legacyPlugins.stdout + legacyPlugins.stderr, /plugin-a/);
+});
+
+// ── Project config tests (.ccx.json) ─────────────────────
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-project-"));
+  try {
+    const result = run(["install"], home, cwd);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout + result.stderr, /No \.ccx\.json found/);
+    assert.match(result.stdout + result.stderr, /ccx init/);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-project-"));
+  try {
+    fs.writeFileSync(path.join(cwd, ".ccx.json"), JSON.stringify({ plugins: [] }));
+    const result = run(["install"], home, cwd);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout + result.stderr, /No plugins in \.ccx\.json/);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-project-"));
+  try {
+    fs.writeFileSync(path.join(cwd, ".ccx.json"), "{bad json");
+    const result = run(["install"], home, cwd);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout + result.stderr, /Invalid \.ccx\.json/);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const result = run(["--help"], home);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout + result.stderr, /ccx init/);
+  assert.match(result.stdout + result.stderr, /Install plugins from \.ccx\.json/);
 });
