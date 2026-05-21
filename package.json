@@ -1,6 +1,6 @@
 {
   "name": "@guanmu/ccprofile",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Agent Profile Manager for Claude Code",
   "type": "module",
   "bin": {
