@@ -746,12 +746,16 @@ async function interactiveMode() {
       const action = await p.select({
         message: "Choose action:",
         options: [
-          { value: "install", label: "Install", hint: "Apply to current project" },
-          { value: "add", label: "Add plugin", hint: "Search and add plugins" },
-          { value: "remove", label: "Remove plugin", hint: "Remove a plugin" },
-          { value: "search", label: "Search marketplace", hint: "Find new plugins" },
+          { value: "install", label: "Install", hint: "Install all plugins from profile" },
+          { value: "add", label: "Add plugin", hint: "Add a plugin to profile" },
+          { value: "remove", label: "Remove plugin", hint: "Remove a plugin from profile" },
+          { value: "list", label: "List plugins", hint: "List plugins in current profile" },
+          { value: "search", label: "Search marketplace", hint: "Search plugins in marketplaces" },
+          { value: "init", label: "Init project", hint: "Create .ccx.json for this project" },
+          { value: "sync", label: "Sync project", hint: "Sync .claude/plugins/ to .ccx.json" },
+          { value: "save", label: "Save as profile", hint: "Save .ccx.json plugins to a profile" },
           { value: "switch", label: "Switch profile", hint: "Choose a different profile" },
-          { value: "delete", label: "Delete profile", hint: "Remove this profile" },
+          { value: "delete", label: "Delete profile", hint: "Delete this profile" },
           { value: "exit", label: "Exit" },
         ],
       });
@@ -771,6 +775,9 @@ async function interactiveMode() {
         case "remove":
           await removePlugin(currentProfile);
           break;
+        case "list":
+          await listPlugins(currentProfile);
+          break;
         case "search": {
           const found = await browsePlugins(currentProfile);
           if (found.length > 0) {
@@ -781,6 +788,15 @@ async function interactiveMode() {
           }
           break;
         }
+        case "init":
+          await initProjectConfig();
+          break;
+        case "sync":
+          syncProjectConfig();
+          break;
+        case "save":
+          await saveToProfile();
+          break;
         case "switch":
           stayInProfile = false;
           break;
@@ -797,33 +813,45 @@ async function interactiveMode() {
 }
 
 function printHelp() {
+  const require = createRequire(import.meta.url);
+  const pkg = require("../package.json");
+
   console.log(`${renderLogo()}
+${pc.bold("ccx")} ${pc.dim("- Agent Profile Manager for Claude Code")}  ${pc.gray(`v${pkg.version}`)}
 
-ccx - Agent Profile Manager for Claude Code
+${pc.bold("Usage:")}
+  ${pc.cyan("ccx")}                            Interactive mode (TTY)
+  ${pc.cyan("ccx ui")}                         Interactive mode (TTY)
 
-Usage:
-  ccx                            Interactive mode (TTY only)
-  ccx ui                         Interactive mode (TTY only)
-  ccx init                       Create .ccx.json for current project
-  ccx sync                       Sync installed plugins to .ccx.json
-  ccx save [name]                Save .ccx.json plugins as a profile
-  ccx install                    Install plugins from .ccx.json
-  ccx install <profile>          Install all plugins from profile
-  ccx create <name>              Create a new profile
-  ccx delete <name>              Remove a profile
-  ccx profiles                   List all profiles
-  ccx add <profile> <plugin>     Add plugin to profile
-  ccx remove <profile> <plugin>  Remove plugin from profile
-  ccx list <profile>             List plugins in profile
-  ccx search <keyword>           Search plugins in marketplaces
-  ccx <profile>                  Install all plugins from profile
-  ccx <profile> add [plugin]     Add plugin to profile (legacy)
-  ccx <profile> remove [plugin]  Remove plugin from profile (legacy)
-  ccx <profile> list             List plugins in profile (legacy)
-  ccx add <name>                 Create a new profile (legacy)
-  ccx remove <name>              Remove a profile (legacy)
-  ccx list                       List all profiles (legacy)
-  ccx -v, --version              Show version`);
+${pc.bold("Project:")}
+  ${pc.cyan("ccx init")}                       Create .ccx.json for current project
+  ${pc.cyan("ccx sync")}                       Sync installed plugins to .ccx.json
+  ${pc.cyan("ccx install")}                    Install plugins from .ccx.json
+  ${pc.cyan("ccx save")} ${pc.dim("[name]")}                Save .ccx.json as a reusable profile
+
+${pc.bold("Profiles:")}
+  ${pc.cyan("ccx create")} ${pc.dim("<name>")}              Create a new profile
+  ${pc.cyan("ccx delete")} ${pc.dim("<name>")}              Delete a profile
+  ${pc.cyan("ccx profiles")}                   List all profiles
+
+${pc.bold("Plugins:")}
+  ${pc.cyan("ccx install")} ${pc.dim("<profile>")}          Install all plugins from a profile
+  ${pc.cyan("ccx add")} ${pc.dim("<profile> <plugin>")}     Add a plugin to a profile
+  ${pc.cyan("ccx remove")} ${pc.dim("<profile> <plugin>")}  Remove a plugin from a profile
+  ${pc.cyan("ccx list")} ${pc.dim("<profile>")}             List plugins in a profile
+  ${pc.cyan("ccx search")} ${pc.dim("<keyword>")}           Search plugins in marketplaces
+
+${pc.bold("Options:")}
+  ${pc.cyan("ccx -v, --version")}              Show version
+
+${pc.dim("Legacy:")}
+  ${pc.dim("ccx <profile>")}                  ${pc.dim("Same as ccx install <profile>")}
+  ${pc.dim("ccx <profile> add [plugin]")}     ${pc.dim("Same as ccx add <profile> <plugin>")}
+  ${pc.dim("ccx <profile> remove [plugin]")}  ${pc.dim("Same as ccx remove <profile> <plugin>")}
+  ${pc.dim("ccx <profile> list")}             ${pc.dim("Same as ccx list <profile>")}
+  ${pc.dim("ccx add <name>")}                 ${pc.dim("Same as ccx create <name>")}
+  ${pc.dim("ccx remove <name>")}              ${pc.dim("Same as ccx delete <name>")}
+  ${pc.dim("ccx list")}                       ${pc.dim("Same as ccx profiles")}`);
 }
 
 // ── Main ──────────────────────────────────────────────────
