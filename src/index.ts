@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
+import pc from "picocolors";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
 const MARKETPLACES_DIR = path.join(
@@ -552,6 +553,28 @@ async function marketplaceWizard(): Promise<WizardResult> {
   }
 }
 
+const CCX_LOGO = [
+  "   ██████╗██████╗",
+  "  ██╔════╝██╔══██╗",
+  "  ██║     ██████╔╝",
+  "  ██║     ██╔══██╗",
+  "  ╚██████╗██║  ██║",
+  "   ╚═════╝╚═╝  ╚═╝",
+];
+
+function printBanner() {
+  const require = createRequire(import.meta.url);
+  const pkg = require("../package.json");
+
+  console.log();
+  CCX_LOGO.forEach((line) => console.log(pc.bold(pc.magenta(line))));
+  console.log();
+  console.log(
+    pc.dim("  ") + pc.italic(pc.white("Agent Profile Manager")) + pc.dim("  ") + pc.gray(`v${pkg.version}`),
+  );
+  console.log();
+}
+
 async function interactiveMode() {
   if (!canPrompt()) {
     printNonInteractiveHelp();
@@ -559,7 +582,7 @@ async function interactiveMode() {
     return;
   }
 
-  p.intro("ccx — Agent Profile Manager");
+  printBanner();
 
   let shouldExit = false;
   while (!shouldExit) {
