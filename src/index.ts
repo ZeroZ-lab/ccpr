@@ -332,27 +332,27 @@ async function addPlugin(profileName: string, plugin?: string) {
       }
     }
 
-    const selected = await p.select({
-      message: `Add plugin to "${profileName}":`,
+    const selected = await p.multiselect({
+      message: `Select plugins to add to "${profileName}":`,
       options: [
         ...filtered.map((pl) => ({
           value: pl.name,
           label: pl.name,
-          hint: pl.description.slice(0, 60),
+          hint: pl.description.slice(0, 50),
         })),
-        { value: "__url__", label: "Enter URL manually...", hint: "Input a GitHub URL or plugin name" },
       ],
+      required: false,
     });
     if (p.isCancel(selected)) return;
 
-    if (selected === "__url__") {
-      plugin = (await p.text({
-        message: "Plugin URL or name:",
-      })) as string;
-      if (p.isCancel(plugin)) return;
-    } else {
-      plugin = selected as string;
+    for (const name of selected as string[]) {
+      data.plugins.push(name);
     }
+    writeProfile(normalizedProfileName, data);
+    if ((selected as string[]).length > 0) {
+      p.log.success(`Added ${(selected as string[]).length} plugin(s) to profile "${normalizedProfileName}".`);
+    }
+    return;
   }
   plugin = normalizePluginName(plugin);
   if (!plugin) return;
@@ -416,58 +416,62 @@ async function listPlugins(profileName: string) {
   }
 }
 
-async function searchPlugins(keyword?: string, currentProfile?: string): Promise<string | undefined> {
-  if (!keyword) {
-    if (!canPrompt()) {
-      missingArg("Search keyword is required.", "ccx search <keyword>");
-      return undefined;
-    }
-    keyword = (await p.text({
-      message: "Search plugins:",
-    })) as string;
-    if (p.isCancel(keyword)) return undefined;
-  }
+async function browsePlugins(currentProfile?: string): Promise<string[]> {
   const allPlugins = getAllPlugins();
-  const lower = keyword.toLowerCase();
-  const results = allPlugins.filter(
-    (pl) =>
-      pl.name.toLowerCase().includes(lower) ||
-      pl.description.toLowerCase().includes(lower) ||
-      (pl.category || "").toLowerCase().includes(lower)
-  );
-  if (results.length === 0) {
-    p.log.warn(`No plugins matching "${keyword}".`);
-    return undefined;
+  if (allPlugins.length === 0) {
+    p.log.warn("No plugins available in marketplaces.");
+    return [];
+  }
+
+  let plugins = allPlugins;
+
+  if (allPlugins.length > 15) {
+    const query = (await p.text({
+      message: "Search plugins (leave empty to list all):",
+    })) as string;
+    if (p.isCancel(query)) return [];
+
+    const q = query.trim().toLowerCase();
+    if (q) {
+      plugins = allPlugins.filter(
+        (pl) =>
+          pl.name.toLowerCase().includes(q) ||
+          pl.description.toLowerCase().includes(q) ||
+          (pl.category || "").toLowerCase().includes(q),
+      );
+      if (plugins.length === 0) {
+        p.log.warn(`No plugins matching "${query.trim()}".`);
+        return [];
+      }
+    }
   }
 
   if (currentProfile) {
     const data = readProfile(currentProfile);
-    const selected = await p.select({
-      message: `Search results for "${keyword}":`,
-      options: [
-        ...results.map((pl) => ({
-          value: pl.name,
-          label: pl.name,
-          hint: pl.description.slice(0, 60) + (data.plugins.includes(pl.name) ? " ✓" : ""),
-        })),
-        { value: "__back__", label: "Back", hint: "Return to menu" },
-      ],
+    const selected = await p.multiselect({
+      message: "Select plugins to add:",
+      options: plugins.map((pl) => ({
+        value: pl.name,
+        label: pl.name,
+        hint: pl.description.slice(0, 50) + (data.plugins.includes(pl.name) ? " (installed)" : ""),
+      })),
+      required: false,
     });
-    if (p.isCancel(selected) || selected === "__back__") return undefined;
-    return selected as string;
+    if (p.isCancel(selected)) return [];
+    return (selected as string[]).filter((name) => !data.plugins.includes(name));
   }
 
   const grouped = new Map<string, PluginEntry[]>();
-  for (const pl of results) {
+  for (const pl of plugins) {
     const list = grouped.get(pl.marketplace) || [];
     list.push(pl);
     grouped.set(pl.marketplace, list);
   }
 
-  console.log(`\n  Found ${results.length} plugin(s) for "${keyword}":\n`);
-  for (const [marketplace, plugins] of grouped) {
+  console.log(`\n  ${plugins.length} plugin(s) available:\n`);
+  for (const [marketplace, mPlugins] of grouped) {
     console.log(`  [${marketplace}]`);
-    for (const pl of plugins) {
+    for (const pl of mPlugins) {
       const desc =
         pl.description.length > 70
           ? pl.description.slice(0, 67) + "..."
@@ -476,7 +480,7 @@ async function searchPlugins(keyword?: string, currentProfile?: string): Promise
     }
     console.log();
   }
-  return undefined;
+  return [];
 }
 
 async function executeProfile(profileName: string) {
@@ -539,13 +543,16 @@ async function interactiveMode() {
     let stayInProfile = true;
     while (stayInProfile && currentProfile) {
       const data = readProfile(currentProfile);
+      const pluginList = data.plugins.length > 0
+        ? data.plugins.map((pl) => `  ${pc.dim("•")} ${pl}`).join("\n")
+        : pc.dim("  (empty)");
+      p.note(`${pc.bold(pc.cyan(currentProfile))}\n${pluginList}`);
       const action = await p.select({
-        message: pc.bold(pc.cyan(`[${currentProfile}]`)) + ` ${data.plugins.length} plugin(s)`,
+        message: "Choose action:",
         options: [
           { value: "install", label: "Install", hint: "Apply to current project" },
-          { value: "add", label: "Add plugin", hint: "Search and add a plugin" },
+          { value: "add", label: "Add plugin", hint: "Search and add plugins" },
           { value: "remove", label: "Remove plugin", hint: "Remove a plugin" },
-          { value: "list", label: "List plugins", hint: "Show all plugins" },
           { value: "search", label: "Search marketplace", hint: "Find new plugins" },
           { value: "switch", label: "Switch profile", hint: "Choose a different profile" },
           { value: "delete", label: "Delete profile", hint: "Remove this profile" },
@@ -568,20 +575,13 @@ async function interactiveMode() {
         case "remove":
           await removePlugin(currentProfile);
           break;
-        case "list":
-          await listPlugins(currentProfile);
-          break;
         case "search": {
-          const found = await searchPlugins(undefined, currentProfile);
-          if (found) {
+          const found = await browsePlugins(currentProfile);
+          if (found.length > 0) {
             const d = readProfile(currentProfile);
-            if (d.plugins.includes(found)) {
-              p.log.warn(`"${found}" already in profile "${currentProfile}".`);
-            } else {
-              d.plugins.push(found);
-              writeProfile(currentProfile, d);
-              p.log.success(`Added "${found}" to profile "${currentProfile}".`);
-            }
+            d.plugins.push(...found);
+            writeProfile(currentProfile, d);
+            p.log.success(`Added ${found.length} plugin(s) to profile "${currentProfile}".`);
           }
           break;
         }
@@ -698,7 +698,7 @@ async function main(args: string[]) {
       break;
 
     case "search":
-      await searchPlugins(args[1]);
+      await browsePlugins();
       break;
 
     default: {
