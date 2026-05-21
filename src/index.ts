@@ -14,6 +14,19 @@ const MARKETPLACES_DIR = path.join(
   "marketplaces"
 );
 const PROJECT_CONFIG_FILE = ".ccx.json";
+const LOGO_LINES = [
+  "   ______ ______ __   __",
+  "  / ____// ____/ \\ \\ / /",
+  " | |    | |      \\ V /",
+  " | |___ | |___   / . \\",
+  "  \\____/ \\____/ /_/ \\_\\",
+];
+
+function renderLogo() {
+  return LOGO_LINES.map((line, index) =>
+    index < 2 ? pc.cyan(line) : pc.magenta(line),
+  ).join("\n");
+}
 
 function ensureProfilesDir() {
   fs.mkdirSync(PROFILES_DIR, { recursive: true });
@@ -667,12 +680,42 @@ function syncProjectConfig() {
   p.log.success(`Synced ${plugins.length} plugin(s) to ${PROJECT_CONFIG_FILE}.`);
 }
 
+async function saveToProfile(name?: string) {
+  const plugins = readProjectConfig();
+
+  if (!name) {
+    if (!canPrompt()) {
+      missingArg("Profile name is required.", "ccx save <name>");
+      return;
+    }
+    name = (await p.text({
+      message: "Save as profile:",
+    })) as string;
+    if (p.isCancel(name)) return;
+  }
+  name = normalizeProfileName(name);
+  if (!name) return;
+
+  const file = profilePath(name);
+  if (fs.existsSync(file)) {
+    const overwrite = await p.confirm({
+      message: `Profile "${name}" already exists. Overwrite?`,
+      initialValue: false,
+    });
+    if (p.isCancel(overwrite) || !overwrite) return;
+  }
+
+  writeProfile(name, { name, plugins });
+  p.log.success(`Saved ${plugins.length} plugin(s) to profile "${name}".`);
+}
+
 function printBanner() {
   const require = createRequire(import.meta.url);
   const pkg = require("../package.json");
 
+  console.log(`${renderLogo()}\n`);
   p.note(
-    pc.bold("ccx") + pc.dim(" — Agent Profile Manager  ") + pc.gray(`v${pkg.version}`),
+    pc.bold("ccx") + pc.dim(" - Agent Profile Manager  ") + pc.gray(`v${pkg.version}`),
   );
 }
 
@@ -754,13 +797,16 @@ async function interactiveMode() {
 }
 
 function printHelp() {
-  console.log(`ccx — Agent Profile Manager for Claude Code
+  console.log(`${renderLogo()}
+
+ccx - Agent Profile Manager for Claude Code
 
 Usage:
   ccx                            Interactive mode (TTY only)
   ccx ui                         Interactive mode (TTY only)
   ccx init                       Create .ccx.json for current project
   ccx sync                       Sync installed plugins to .ccx.json
+  ccx save [name]                Save .ccx.json plugins as a profile
   ccx install                    Install plugins from .ccx.json
   ccx install <profile>          Install all plugins from profile
   ccx create <name>              Create a new profile
@@ -809,6 +855,10 @@ async function main(args: string[]) {
 
     case "sync":
       syncProjectConfig();
+      break;
+
+    case "save":
+      await saveToProfile(args[1]);
       break;
 
     case "ui":

@@ -1,5 +1,13 @@
 # ccx
 
+```text
+   ______ ______ __   __
+  / ____// ____/ \ \ / /
+ | |    | |      \ V /
+ | |___ | |___   / . \
+  \____/ \____/ /_/ \_\
+```
+
 Agent Profile Manager for Claude Code.
 
 `ccx` lets you save named Claude Code plugin profiles and install a whole profile into the current project with one command. It is designed as a command-first CLI, with a lightweight interactive wizard for manual use.

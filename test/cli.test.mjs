@@ -146,6 +146,31 @@ withHome((home) => {
 withHome((home) => {
   const result = run(["--help"], home);
   assert.equal(result.status, 0);
+  assert.match(result.stdout + result.stderr, /______ ______ __   __/);
   assert.match(result.stdout + result.stderr, /ccx init/);
   assert.match(result.stdout + result.stderr, /Install plugins from \.ccx\.json/);
+});
+
+// ── ccx save tests ─────────────────────────────────────────
+
+withHome((home) => {
+  const result = run(["save", "my-profile"], home);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout + result.stderr, /No \.ccx\.json found/);
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-save-"));
+  try {
+    fs.writeFileSync(path.join(cwd, ".ccx.json"), JSON.stringify({ plugins: ["plugin-a", "plugin-b"] }));
+    const result = run(["save", "my-profile"], home, cwd);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout + result.stderr, /Saved 2 plugin\(s\)/);
+
+    const profile = JSON.parse(fs.readFileSync(path.join(home, ".ccx", "profiles", "my-profile.json"), "utf-8"));
+    assert.deepEqual(profile.plugins, ["plugin-a", "plugin-b"]);
+    assert.equal(profile.name, "my-profile");
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 });
