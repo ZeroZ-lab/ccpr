@@ -5,6 +5,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { inspectProject } from "./application.js";
+import { createClaudePluginClient } from "./claude-cli.js";
+import { routeProjectDiff } from "./presentation.js";
+import { createManifestStore } from "./stores.js";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
 const MARKETPLACES_DIR = path.join(
@@ -871,6 +875,21 @@ async function main(args: string[]) {
     const require = createRequire(import.meta.url);
     const pkg = require("../package.json");
     console.log(`ccx v${pkg.version}`);
+    return;
+  }
+
+  const projectDiffStatus = routeProjectDiff(args, {
+    projectRoot: process.cwd(),
+    inspect: (projectRoot) =>
+      inspectProject(projectRoot, {
+        manifestStore: createManifestStore(),
+        claudePluginClient: createClaudePluginClient(),
+      }),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (projectDiffStatus !== undefined) {
+    process.exitCode = projectDiffStatus;
     return;
   }
 

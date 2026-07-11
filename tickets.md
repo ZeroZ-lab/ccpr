@@ -10,12 +10,12 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 
 **Blocked by:** None — can start immediately.
 
-- [ ] `ccx project diff` and `ccx diff` read the current Project Manifest and report deterministic Missing and Undeclared groups.
-- [ ] Installed State includes only project-scope entries for the normalized current project root.
-- [ ] Clean, drifting, and failed inspection return exit statuses 0, 2, and 1 respectively.
-- [ ] Missing/invalid manifests and malformed/failed Claude listings produce actionable stderr without stack traces.
-- [ ] Black-box tests use isolated home/project roots and a fake `claude` executable at the external process boundary.
-- [ ] Domain, application, storage, Claude, presentation, and composition responsibilities no longer depend on one monolithic entry module for this path.
+- [x] `ccx project diff` and `ccx diff` read the current Project Manifest and report deterministic Missing and Undeclared groups.
+- [x] Installed State includes only project-scope entries for the normalized current project root.
+- [x] Clean, drifting, and failed inspection return exit statuses 0, 2, and 1 respectively.
+- [x] Missing/invalid manifests and malformed/failed Claude listings produce actionable stderr without stack traces.
+- [x] Black-box tests use isolated home/project roots and a fake `claude` executable at the external process boundary.
+- [x] Domain, application, storage, Claude, presentation, and composition responsibilities no longer depend on one monolithic entry module for this path.
 
 ## Safely bring the Project Plugin Environment up
 
