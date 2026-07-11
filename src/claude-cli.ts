@@ -8,10 +8,12 @@ import type {
 import {
   parseQualifiedPluginReference,
   type InstalledState,
+  type PluginReference,
   type Result,
 } from "./domain.js";
 
 function claudeError(
+  operation: ClaudeCliError["operation"],
   code: ClaudeCliError["code"],
   message: string,
   details: Partial<Pick<ClaudeCliError, "status" | "stdout" | "stderr">> = {},
@@ -21,7 +23,7 @@ function claudeError(
     error: {
       kind: "claude_cli",
       code,
-      operation: "list",
+      operation,
       message,
       ...details,
     },
@@ -51,6 +53,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
         });
       } catch (error) {
         return claudeError(
+          "list",
           "spawn_failed",
           `Unable to run \`claude plugin list --json\`: ${
             error instanceof Error ? error.message : String(error)
@@ -63,6 +66,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
 
       if (child.error) {
         return claudeError(
+          "list",
           "spawn_failed",
           `Unable to run \`claude plugin list --json\`: ${child.error.message}`,
           { stdout, stderr },
@@ -71,6 +75,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
 
       if (child.status !== 0) {
         return claudeError(
+          "list",
           "command_failed",
           child.status === null
             ? "`claude plugin list --json` terminated without an exit status."
@@ -88,6 +93,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
         data = JSON.parse(stdout);
       } catch {
         return claudeError(
+          "list",
           "invalid_json",
           "Claude returned invalid JSON from `claude plugin list --json`.",
           { stdout, stderr },
@@ -96,6 +102,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
 
       if (!Array.isArray(data)) {
         return claudeError(
+          "list",
           "invalid_shape",
           "Claude returned an invalid plugin listing: expected a JSON array.",
           { stdout, stderr },
@@ -108,6 +115,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
       for (const [index, entry] of data.entries()) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
           return claudeError(
+            "list",
             "invalid_shape",
             `Claude returned an invalid plugin listing: entry ${index + 1} must be an object.`,
             { stdout, stderr },
@@ -117,6 +125,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
         const scope = (entry as { scope?: unknown }).scope;
         if (typeof scope !== "string") {
           return claudeError(
+            "list",
             "invalid_shape",
             `Claude returned an invalid plugin listing: entry ${index + 1} has no valid scope.`,
             { stdout, stderr },
@@ -127,6 +136,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
         const projectPath = (entry as { projectPath?: unknown }).projectPath;
         if (typeof projectPath !== "string" || !projectPath.trim()) {
           return claudeError(
+            "list",
             "invalid_shape",
             `Claude returned an invalid plugin listing: project entry ${index + 1} has no valid projectPath.`,
             { stdout, stderr },
@@ -144,6 +154,7 @@ export function createClaudePluginClient(): ClaudePluginClient {
         );
         if (!reference.ok) {
           return claudeError(
+            "list",
             "invalid_shape",
             `Claude returned an invalid plugin listing: project entry ${index + 1} has no valid qualified id.`,
             { stdout, stderr },
@@ -156,6 +167,61 @@ export function createClaudePluginClient(): ClaudePluginClient {
         ok: true,
         value: { projectRoot: normalizedProjectRoot, plugins },
       };
+    },
+
+    installProject(
+      projectRoot: string,
+      reference: PluginReference,
+    ): Result<void, ClaudeCliError> {
+      let child;
+      try {
+        child = spawnSync(
+          "claude",
+          ["plugin", "install", reference, "--scope", "project"],
+          {
+            cwd: projectRoot,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+      } catch (error) {
+        return claudeError(
+          "install",
+          "spawn_failed",
+          `Unable to run \`claude plugin install ${reference} --scope project\`: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      const stdout = child.stdout || "";
+      const stderr = child.stderr || "";
+
+      if (child.error) {
+        return claudeError(
+          "install",
+          "spawn_failed",
+          `Unable to run \`claude plugin install ${reference} --scope project\`: ${child.error.message}`,
+          { stdout, stderr },
+        );
+      }
+
+      if (child.status !== 0) {
+        return claudeError(
+          "install",
+          "command_failed",
+          child.status === null
+            ? `\`claude plugin install ${reference} --scope project\` terminated without an exit status.`
+            : `\`claude plugin install ${reference} --scope project\` exited with status ${child.status}.`,
+          {
+            ...(child.status === null ? {} : { status: child.status }),
+            stdout,
+            stderr,
+          },
+        );
+      }
+
+      return { ok: true, value: undefined };
     },
   };
 }

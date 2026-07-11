@@ -5,9 +5,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { inspectProject } from "./application.js";
+import { applyProject, inspectProject } from "./application.js";
 import { createClaudePluginClient } from "./claude-cli.js";
-import { routeProjectDiff } from "./presentation.js";
+import { routeProjectDiff, routeProjectUp } from "./presentation.js";
 import { createManifestStore } from "./stores.js";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
@@ -890,6 +890,21 @@ async function main(args: string[]) {
   });
   if (projectDiffStatus !== undefined) {
     process.exitCode = projectDiffStatus;
+    return;
+  }
+
+  const projectUpStatus = routeProjectUp(args, {
+    projectRoot: process.cwd(),
+    apply: (projectRoot) =>
+      applyProject(projectRoot, {
+        manifestStore: createManifestStore(),
+        claudePluginClient: createClaudePluginClient(),
+      }),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (projectUpStatus !== undefined) {
+    process.exitCode = projectUpStatus;
     return;
   }
 

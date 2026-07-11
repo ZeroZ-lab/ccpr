@@ -22,14 +22,14 @@ function run(args, home, cwd, env = {}) {
   });
 }
 
-function installFakeClaude(home, list) {
+function installFakeClaude(home, list, install = {}) {
   const binDir = path.join(home, "bin");
   const configPath = path.join(home, "fake-claude.json");
   const logPath = path.join(home, "fake-claude-calls.jsonl");
   const executable = path.join(binDir, "claude");
 
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({ list }));
+  fs.writeFileSync(configPath, JSON.stringify({ list, install }));
   fs.writeFileSync(
     executable,
     `#!/usr/bin/env node
@@ -40,13 +40,25 @@ fs.appendFileSync(
   process.env.CCX_FAKE_CLAUDE_LOG,
   JSON.stringify({ args, cwd: process.cwd() }) + "\\n",
 );
-if (args.join(" ") !== "plugin list --json") {
+let outcome;
+if (args.join(" ") === "plugin list --json") {
+  outcome = config.list;
+} else if (
+  args.length === 5 &&
+  args[0] === "plugin" &&
+  args[1] === "install" &&
+  args[3] === "--scope" &&
+  args[4] === "project" &&
+  Object.prototype.hasOwnProperty.call(config.install, args[2])
+) {
+  outcome = config.install[args[2]];
+} else {
   process.stderr.write("Unexpected fake Claude invocation: " + args.join(" "));
   process.exit(64);
 }
-process.stdout.write(config.list.stdout || "");
-process.stderr.write(config.list.stderr || "");
-process.exit(config.list.status ?? 0);
+process.stdout.write(outcome.stdout || "");
+process.stderr.write(outcome.stderr || "");
+process.exit(outcome.status ?? 0);
 `,
   );
   fs.chmodSync(executable, 0o755);
@@ -181,6 +193,221 @@ withHome((home) => {
     assert.equal(result.stderr, "");
     assert.deepEqual(claude.readCalls(), [
       { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+    ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-up-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({ plugins: ["formatter@official"] }),
+    );
+    const claude = installFakeClaude(home, {
+      stdout: JSON.stringify([
+        {
+          id: "formatter@official",
+          scope: "project",
+          projectPath: cwd,
+        },
+      ]),
+    });
+
+    const result = run(["project", "up"], home, cwd, claude.env);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      result.stdout,
+      "Missing:\n  (none)\nUndeclared:\n  (none)\nInstalled:\n  (none)\nFailed:\n  (none)\n",
+    );
+    assert.equal(result.stderr, "");
+    assert.deepEqual(claude.readCalls(), [
+      { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+    ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-up-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({
+        plugins: ["qualified@official", "legacy-plugin"],
+      }),
+    );
+    const claude = installFakeClaude(
+      home,
+      { stdout: "[]" },
+      {
+        "qualified@official": {},
+        "legacy-plugin": {},
+      },
+    );
+
+    const result = run(["project", "up"], home, cwd, claude.env);
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /legacy-plugin/);
+    assert.match(result.stderr, /Update \.ccx\.json/);
+    assert.match(result.stderr, /plugin-name@marketplace-name/);
+    assert.deepEqual(claude.readCalls(), [
+      { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+    ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-up-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({
+        plugins: [
+          "alpha@official",
+          "beta@official",
+          "gamma@official",
+        ],
+      }),
+    );
+    const claude = installFakeClaude(
+      home,
+      { stdout: "[]" },
+      {
+        "alpha@official": {},
+        "beta@official": {
+          status: 23,
+          stdout: "partial install output",
+          stderr: "marketplace unavailable",
+        },
+        "gamma@official": {},
+      },
+    );
+
+    const result = run(["project", "up"], home, cwd, claude.env);
+
+    assert.equal(result.status, 1);
+    assert.equal(
+      result.stdout,
+      "Missing:\n  alpha@official\n  beta@official\n  gamma@official\nUndeclared:\n  (none)\nInstalled:\n  alpha@official\n  gamma@official\nFailed:\n  beta@official\n",
+    );
+    assert.match(result.stderr, /Failed beta@official:/);
+    assert.match(result.stderr, /exited with status 23/);
+    assert.match(result.stderr, /marketplace unavailable/);
+    assert.match(result.stderr, /partial install output/);
+    assert.doesNotMatch(result.stdout + result.stderr, /Done\./);
+    assert.deepEqual(claude.readCalls(), [
+      { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+      {
+        args: [
+          "plugin",
+          "install",
+          "alpha@official",
+          "--scope",
+          "project",
+        ],
+        cwd: fs.realpathSync(cwd),
+      },
+      {
+        args: [
+          "plugin",
+          "install",
+          "beta@official",
+          "--scope",
+          "project",
+        ],
+        cwd: fs.realpathSync(cwd),
+      },
+      {
+        args: [
+          "plugin",
+          "install",
+          "gamma@official",
+          "--scope",
+          "project",
+        ],
+        cwd: fs.realpathSync(cwd),
+      },
+    ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-up-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({
+        plugins: [
+          "already@official",
+          "zeta@official",
+          "alpha@official",
+          "zeta@official",
+        ],
+      }),
+    );
+    const claude = installFakeClaude(
+      home,
+      {
+        stdout: JSON.stringify([
+          {
+            id: "already@official",
+            scope: "project",
+            projectPath: cwd,
+          },
+          {
+            id: "local-only@official",
+            scope: "project",
+            projectPath: cwd,
+          },
+        ]),
+      },
+      {
+        "zeta@official": {},
+        "alpha@official": {},
+      },
+    );
+
+    const result = run(["up"], home, cwd, claude.env);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      result.stdout,
+      "Missing:\n  zeta@official\n  alpha@official\nUndeclared:\n  local-only@official\nInstalled:\n  zeta@official\n  alpha@official\nFailed:\n  (none)\n",
+    );
+    assert.equal(result.stderr, "");
+    assert.deepEqual(claude.readCalls(), [
+      { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+      {
+        args: [
+          "plugin",
+          "install",
+          "zeta@official",
+          "--scope",
+          "project",
+        ],
+        cwd: fs.realpathSync(cwd),
+      },
+      {
+        args: [
+          "plugin",
+          "install",
+          "alpha@official",
+          "--scope",
+          "project",
+        ],
+        cwd: fs.realpathSync(cwd),
+      },
     ]);
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });

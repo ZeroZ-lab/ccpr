@@ -23,12 +23,12 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 
 **Blocked by:** Inspect Project Drift through the public CLI.
 
-- [ ] `ccx project up` and `ccx up` install only Missing Plugin References with project scope and the current project working directory.
-- [ ] Already installed and Undeclared plugins cause no install or uninstall call.
-- [ ] Independent installs continue after a failure and the report separates installed and failed references.
-- [ ] Any partial failure exits 1 and never prints an unconditional success message; complete/no-op Apply exits 0.
-- [ ] Canonical Apply rejects ambiguous new state safely while bounded legacy behavior remains possible for the compatibility ticket.
-- [ ] Public-process tests cover no-op, successful, partial-failure, listing-failure, and add-only behavior.
+- [x] `ccx project up` and `ccx up` install only Missing Plugin References with project scope and the current project working directory.
+- [x] Already installed and Undeclared plugins cause no install or uninstall call.
+- [x] Independent installs continue after a failure and the report separates installed and failed references.
+- [x] Any partial failure exits 1 and never prints an unconditional success message; complete/no-op Apply exits 0.
+- [x] Canonical Apply rejects ambiguous new state safely while bounded legacy behavior remains possible for the compatibility ticket.
+- [x] Public-process tests cover no-op, successful, partial-failure, listing-failure, and add-only behavior.
 
 ## Initialize and import Project Manifests safely
 
