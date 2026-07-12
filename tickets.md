@@ -71,4 +71,4 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 - [x] Unknown canonical commands are not interpreted as Profile names; ambiguous legacy routing remains isolated for removal in 0.3.
 - [x] Help and README describe the Project Plugin Environment, Docker-style commands, TTY journey, migration window, exit statuses, and qualified Plugin References.
 - [x] The package identifies as 0.2.0 without publishing or creating a release.
-- [ ] Full build, black-box test suite, diff checks, and two-axis code review pass.
+- [x] Full build, black-box test suite, diff checks, and two-axis code review pass.
