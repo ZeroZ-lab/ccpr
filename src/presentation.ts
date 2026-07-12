@@ -10,7 +10,12 @@ import type {
   ProfileSummary,
   StoreError,
 } from "./application.js";
-import type { Drift, ProjectManifest, Result } from "./domain.js";
+import {
+  parseQualifiedPluginReference,
+  type Drift,
+  type ProjectManifest,
+  type Result,
+} from "./domain.js";
 
 export interface ProjectDiffPresentation {
   readonly projectRoot: string;
@@ -145,6 +150,16 @@ function renderCatalog(plugins: readonly CatalogPlugin[]): string {
   }).join("\n")}\n`;
 }
 
+function renderLegacyReferenceGuidance(
+  references: readonly string[],
+): string | undefined {
+  const legacy = references.filter(
+    (reference) => !parseQualifiedPluginReference(reference).ok,
+  );
+  if (legacy.length === 0) return undefined;
+  return `Legacy unqualified Plugin Reference${legacy.length === 1 ? "" : "s"}: ${legacy.join(", ")}. Replace with plugin@marketplace before the legacy compatibility window ends.\n`;
+}
+
 export function routeProfileCommand(
   args: readonly string[],
   presentation: ProfileCommandPresentation,
@@ -195,6 +210,8 @@ export function routeProfileCommand(
       presentation.writeStderr(`${profile.error.message}\n`);
       return 1;
     }
+    const guidance = renderLegacyReferenceGuidance(profile.value.plugins);
+    if (guidance) presentation.writeStderr(guidance);
     presentation.writeStdout(
       profile.value.plugins.length === 0
         ? "(empty)\n"
@@ -404,6 +421,8 @@ export function routeProjectDiff(
     return 1;
   }
 
+  const guidance = renderLegacyReferenceGuidance(inspection.value.missing);
+  if (guidance) presentation.writeStderr(guidance);
   presentation.writeStdout(renderDrift(inspection.value));
   return inspection.value.missing.length > 0 ||
     inspection.value.undeclared.length > 0

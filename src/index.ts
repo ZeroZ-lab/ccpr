@@ -17,6 +17,7 @@ import {
   prepareProjectImport,
   removeProfileTemplate,
   searchCatalogPlugins,
+  updateProjectManifest,
   updateProfile,
 } from "./application.js";
 import { createClaudePluginClient } from "./claude-cli.js";
@@ -325,6 +326,7 @@ async function addProfile(name?: string) {
   const file = profilePath(name);
   if (fs.existsSync(file)) {
     p.log.error(`Profile "${name}" already exists.`);
+    process.exitCode = 1;
     return;
   }
   writeProfile(name, { name, plugins: [] });
@@ -359,6 +361,7 @@ async function removeProfile(name?: string) {
   const file = profilePath(name);
   if (!fs.existsSync(file)) {
     p.log.error(`Profile "${name}" not found.`);
+    process.exitCode = 1;
     return;
   }
   fs.unlinkSync(file);
@@ -480,6 +483,7 @@ async function removePlugin(profileName: string, plugin?: string) {
   const idx = data.plugins.indexOf(plugin);
   if (idx === -1) {
     p.log.error(`Plugin "${plugin}" not found.`);
+    process.exitCode = 1;
     return;
   }
   data.plugins.splice(idx, 1);
@@ -910,6 +914,60 @@ async function runInteractiveProjectCommand(args: string[]) {
   process.exitCode = previousExitCode;
 }
 
+async function interactiveProjectEdit() {
+  const manifestStore = createManifestStore();
+  const manifest = manifestStore.read(process.cwd());
+  if (!manifest.ok) {
+    p.log.error(manifest.error.message);
+    return;
+  }
+  const action = await p.select({
+    message: "Edit Project Manifest:",
+    options: [
+      { value: "add", label: "Add Plugin Reference" },
+      { value: "remove", label: "Remove Plugin Reference" },
+      { value: "back", label: "Back" },
+    ],
+  });
+  if (p.isCancel(action) || action === "back") return;
+
+  let reference: string;
+  if (action === "add") {
+    const entered = await p.text({
+      message: "Plugin Reference (plugin@marketplace):",
+    });
+    if (p.isCancel(entered)) return;
+    reference = entered;
+  } else {
+    if (manifest.value.plugins.length === 0) {
+      p.log.warn("Project Manifest is empty.");
+      return;
+    }
+    const selected = await p.select({
+      message: "Remove Plugin Reference:",
+      options: manifest.value.plugins.map((plugin) => ({
+        value: plugin,
+        label: plugin,
+      })),
+    });
+    if (p.isCancel(selected)) return;
+    reference = selected as string;
+  }
+
+  const updated = updateProjectManifest(
+    process.cwd(),
+    { kind: action as "add" | "remove", reference },
+    manifestStore,
+  );
+  if (updated.ok) {
+    p.log.success(
+      `${action === "add" ? "Added" : "Removed"} ${reference} ${action === "add" ? "to" : "from"} .ccx.json.`,
+    );
+  } else {
+    p.log.error(updated.error.message);
+  }
+}
+
 async function interactiveMode() {
   if (!canPrompt()) {
     printNonInteractiveHelp();
@@ -962,6 +1020,7 @@ async function interactiveMode() {
       options: [
         { value: "up", label: "Up", hint: "Install missing plugins" },
         { value: "diff", label: "Diff", hint: "Show Drift" },
+        { value: "edit", label: "Edit", hint: "Change Project Manifest" },
         { value: "import", label: "Import", hint: "Capture Installed State" },
         { value: "profiles", label: "Profiles" },
         { value: "catalog", label: "Plugin catalog" },
@@ -971,6 +1030,7 @@ async function interactiveMode() {
     if (p.isCancel(action) || action === "exit") break;
     if (action === "up") await runInteractiveProjectCommand(["project", "up"]);
     else if (action === "diff") await runInteractiveProjectCommand(["project", "diff"]);
+    else if (action === "edit") await interactiveProjectEdit();
     else if (action === "import") await runInteractiveProjectCommand(["project", "import"]);
     else if (action === "profiles") await interactiveProfiles();
     else showPluginCatalog();
@@ -1324,13 +1384,23 @@ async function main(args: string[]) {
       }
       break;
 
-    case "search":
+    case "search": {
       warnDeprecated(
         `ccx search${args[1] ? ` ${args[1]}` : ""}`,
         `ccx plugin search${args[1] ? ` ${args[1]}` : " KEYWORD"}`,
       );
-      await browsePlugins();
-      break;
+      const status = routePluginCommand(
+        ["plugin", "search", ...(args[1] ? [args[1]] : [])],
+        {
+          list: () => listCatalogPlugins(catalogStore),
+          search: (keyword) => searchCatalogPlugins(keyword, catalogStore),
+          writeStdout: (output) => process.stdout.write(output),
+          writeStderr: (output) => process.stderr.write(output),
+        },
+      );
+      process.exitCode = status;
+      return;
+    }
 
     default: {
       if (cmd === "project") {

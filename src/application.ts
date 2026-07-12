@@ -149,20 +149,12 @@ export function initializeProjectFromProfile(
   const profile = dependencies.profileStore.read(profileName);
   if (!profile.ok) return profile;
 
-  const plugins: PluginReference[] = [];
-  const seen = new Set<PluginReference>();
-  for (const candidate of profile.value.plugins) {
-    const reference = parseQualifiedPluginReference(candidate);
-    if (!reference.ok) return reference;
-    if (!seen.has(reference.value)) {
-      seen.add(reference.value);
-      plugins.push(reference.value);
-    }
-  }
+  const normalized = normalizeQualifiedReferences(profile.value.plugins);
+  if (!normalized.ok) return normalized;
 
   return writeInitializedProject(
     projectRoot,
-    { plugins },
+    { plugins: normalized.value },
     dependencies.manifestStore,
   );
 }
@@ -183,9 +175,7 @@ export function prepareProjectImport(
   const installed = dependencies.claudePluginClient.listProject(projectRoot);
   if (!installed.ok) return installed;
 
-  const plugins = [...new Set(installed.value.plugins)].sort((left, right) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );
+  const plugins = [...new Set(installed.value.plugins)];
   const currentPlugins = current.ok
     ? [...new Set(current.value.plugins)]
     : [];
@@ -208,6 +198,47 @@ export function commitProjectImport(
   manifestStore: ManifestStore,
 ): Result<void, StoreError> {
   return manifestStore.write(projectRoot, preview.manifest);
+}
+
+export interface ManifestActionError {
+  readonly kind: "manifest";
+  readonly code: "plugin_not_found";
+  readonly message: string;
+}
+
+export function updateProjectManifest(
+  projectRoot: string,
+  change: { readonly kind: "add" | "remove"; readonly reference: string },
+  manifestStore: ManifestStore,
+): Result<ProjectManifest, StoreError | DomainError | ManifestActionError> {
+  const manifest = manifestStore.read(projectRoot);
+  if (!manifest.ok) return manifest;
+
+  const parsed = change.kind === "add"
+    ? parseQualifiedPluginReference(change.reference)
+    : parseReadablePluginReference(change.reference);
+  if (!parsed.ok) return parsed;
+
+  const plugins = [...manifest.value.plugins];
+  const index = plugins.indexOf(parsed.value);
+  if (change.kind === "add") {
+    if (index === -1) plugins.push(parsed.value);
+  } else if (index === -1) {
+    return {
+      ok: false,
+      error: {
+        kind: "manifest",
+        code: "plugin_not_found",
+        message: `Plugin ${JSON.stringify(change.reference)} not found in .ccx.json.`,
+      },
+    };
+  } else {
+    plugins.splice(index, 1);
+  }
+
+  const updated = { plugins };
+  const written = manifestStore.write(projectRoot, updated);
+  return written.ok ? { ok: true, value: updated } : written;
 }
 
 export interface ProfileActionError {

@@ -146,7 +146,8 @@ withHome((home) => {
 
   const result = run(["search", "plugin"], home);
   assert.equal(result.status, 0);
-  assert.match(result.stdout + result.stderr, /Skipping invalid marketplace/);
+  assert.equal(result.stdout, "No plugins found.\n");
+  assert.doesNotMatch(result.stderr, /Skipping invalid marketplace/);
   assert.match(result.stderr, /Use ccx plugin search plugin/);
 });
 
@@ -273,6 +274,23 @@ withHome((home) => {
   assert.doesNotMatch(result.stdout + result.stderr, /\u001b\[/);
 });
 
+withHome((home) => {
+  assert.equal(run(["create", "dev"], home).status, 0);
+
+  const duplicate = run(["create", "dev"], home);
+  assert.equal(duplicate.status, 1);
+  assert.match(duplicate.stdout + duplicate.stderr, /already exists/);
+
+  const missingProfile = run(["delete", "missing"], home);
+  assert.equal(missingProfile.status, 1);
+  assert.match(missingProfile.stdout + missingProfile.stderr, /not found/);
+
+  assert.equal(run(["add", "dev", "plugin-a"], home).status, 0);
+  const missingPlugin = run(["remove", "dev", "plugin-b"], home);
+  assert.equal(missingPlugin.status, 1);
+  assert.match(missingPlugin.stdout + missingPlugin.stderr, /not found/);
+});
+
 // ── Project config tests (.ccx.json) ─────────────────────
 
 withHome((home) => {
@@ -370,11 +388,11 @@ withHome((home) => {
     assert.equal(result.stderr, "");
     assert.equal(
       result.stdout,
-      "Added:\n  alpha@official\n  zeta@official\nRemoved:\n  (none)\nImported .ccx.json with 2 plugins.\n",
+      "Added:\n  zeta@official\n  alpha@official\nRemoved:\n  (none)\nImported .ccx.json with 2 plugins.\n",
     );
     assert.equal(
       fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8"),
-      '{\n  "plugins": [\n    "alpha@official",\n    "zeta@official"\n  ]\n}\n',
+      '{\n  "plugins": [\n    "zeta@official",\n    "alpha@official"\n  ]\n}\n',
     );
     assert.equal(claude.readCalls().length, 1);
   } finally {
@@ -589,6 +607,25 @@ withHome((home) => {
     assert.deepEqual(claude.readCalls(), [
       { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
     ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-diff-legacy-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({ plugins: ["legacy-plugin"] }),
+    );
+    const claude = installFakeClaude(home, { stdout: "[]" });
+    const result = run(["project", "diff"], home, cwd, claude.env);
+
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.match(result.stdout, /legacy-plugin/);
+    assert.match(result.stderr, /Legacy unqualified Plugin Reference/);
+    assert.match(result.stderr, /plugin@marketplace/);
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
@@ -1108,6 +1145,17 @@ withHome((home) => {
       path.join(home, ".ccx", "profiles", "legacy.json"),
       JSON.stringify({ name: "legacy", plugins: ["bare-plugin"] }),
     );
+    const inspectedLegacy = run(
+      ["profile", "inspect", "legacy"],
+      home,
+      cwd,
+    );
+    assert.equal(inspectedLegacy.status, 0);
+    assert.equal(inspectedLegacy.stdout, "bare-plugin\n");
+    assert.match(
+      inspectedLegacy.stderr,
+      /Legacy unqualified Plugin Reference.*plugin@marketplace/,
+    );
     const removedLegacy = run(
       ["profile", "update", "--remove", "bare-plugin", "legacy"],
       home,
@@ -1177,4 +1225,14 @@ withHome((home) => {
   assert.equal(searched.status, 0, searched.stdout + searched.stderr);
   assert.match(searched.stdout, /formatter@team/);
   assert.doesNotMatch(searched.stdout, /browser@team/);
+
+  const legacySearch = run(["search", "formatter"], home);
+  assert.equal(
+    legacySearch.status,
+    0,
+    legacySearch.stdout + legacySearch.stderr,
+  );
+  assert.match(legacySearch.stdout, /formatter@team/);
+  assert.doesNotMatch(legacySearch.stdout, /browser@team/);
+  assert.match(legacySearch.stderr, /Use ccx plugin search formatter/);
 });

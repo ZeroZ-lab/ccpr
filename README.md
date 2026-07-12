@@ -15,8 +15,14 @@ ccx keeps the plugins expected by a project in a version-controlled `.ccx.json`,
 ## Install
 
 ```bash
-npm install -g @guanmu/ccprofile
+bun add -g @guanmu/ccprofile@latest
 ccx --version
+```
+
+Or with npm:
+
+```bash
+npm install -g @guanmu/ccprofile
 ```
 
 Node.js 20.12 or newer and the `claude` CLI are required.
