@@ -19,12 +19,6 @@ bun add -g @guanmu/ccprofile@latest
 ccx --version
 ```
 
-Or with npm:
-
-```bash
-npm install -g @guanmu/ccprofile
-```
-
 Node.js 20.12 or newer and the `claude` CLI are required.
 
 ## Project workflow

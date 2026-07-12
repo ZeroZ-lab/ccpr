@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { parseQualifiedPluginReference } from "./domain.js";
 import {
   applyProject,
   commitProjectImport,
@@ -91,6 +92,16 @@ function normalizePluginName(plugin?: string) {
     return undefined;
   }
   return normalized;
+}
+
+function warnLegacyPluginReferences(plugins: readonly string[]) {
+  const legacy = plugins.filter(
+    (plugin) => !parseQualifiedPluginReference(plugin).ok,
+  );
+  if (legacy.length === 0) return;
+  console.error(
+    `Legacy unqualified Plugin Reference${legacy.length === 1 ? "" : "s"}: ${legacy.join(", ")}. Replace with plugin@marketplace before the legacy compatibility window ends.`,
+  );
 }
 
 interface ProfileData {
@@ -342,6 +353,7 @@ async function removeProfile(name?: string) {
   const names = getProfileNames();
   if (names.length === 0) {
     p.log.warn("No profiles found.");
+    if (name) process.exitCode = 1;
     return;
   }
   if (!name) {
@@ -461,6 +473,7 @@ async function removePlugin(profileName: string, plugin?: string) {
   const data = readProfile(profileName);
   if (data.plugins.length === 0) {
     p.log.warn("No plugins in this profile.");
+    process.exitCode = 1;
     return;
   }
   if (!plugin) {
@@ -500,6 +513,7 @@ async function listPlugins(profileName: string) {
     p.log.warn(`No plugins in profile "${normalizedProfileName}".`);
     return;
   }
+  warnLegacyPluginReferences(data.plugins);
   for (const pl of data.plugins) {
     p.log.success(pl);
   }
@@ -625,6 +639,7 @@ async function executeProfile(profileName: string) {
     return;
   }
 
+  warnLegacyPluginReferences(data.plugins);
   await installPlugins(data.plugins, normalizedProfileName);
 }
 

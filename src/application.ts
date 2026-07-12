@@ -206,6 +206,35 @@ export interface ManifestActionError {
   readonly message: string;
 }
 
+interface ReferenceUpdateNotFound {
+  readonly kind: "reference_update";
+  readonly code: "plugin_not_found";
+}
+
+function updatePluginReferences(
+  candidates: readonly PluginReference[],
+  change: { readonly kind: "add" | "remove"; readonly reference: string },
+): Result<readonly PluginReference[], DomainError | ReferenceUpdateNotFound> {
+  const parsed = change.kind === "add"
+    ? parseQualifiedPluginReference(change.reference)
+    : parseReadablePluginReference(change.reference);
+  if (!parsed.ok) return parsed;
+
+  const plugins = [...new Set(candidates)];
+  const index = plugins.indexOf(parsed.value);
+  if (change.kind === "add") {
+    if (index === -1) plugins.push(parsed.value);
+  } else if (index === -1) {
+    return {
+      ok: false,
+      error: { kind: "reference_update", code: "plugin_not_found" },
+    };
+  } else {
+    plugins.splice(index, 1);
+  }
+  return { ok: true, value: plugins };
+}
+
 export function updateProjectManifest(
   projectRoot: string,
   change: { readonly kind: "add" | "remove"; readonly reference: string },
@@ -214,29 +243,22 @@ export function updateProjectManifest(
   const manifest = manifestStore.read(projectRoot);
   if (!manifest.ok) return manifest;
 
-  const parsed = change.kind === "add"
-    ? parseQualifiedPluginReference(change.reference)
-    : parseReadablePluginReference(change.reference);
-  if (!parsed.ok) return parsed;
-
-  const plugins = [...manifest.value.plugins];
-  const index = plugins.indexOf(parsed.value);
-  if (change.kind === "add") {
-    if (index === -1) plugins.push(parsed.value);
-  } else if (index === -1) {
-    return {
-      ok: false,
-      error: {
-        kind: "manifest",
-        code: "plugin_not_found",
-        message: `Plugin ${JSON.stringify(change.reference)} not found in .ccx.json.`,
-      },
-    };
-  } else {
-    plugins.splice(index, 1);
+  const plugins = updatePluginReferences(manifest.value.plugins, change);
+  if (!plugins.ok) {
+    if (plugins.error.kind === "reference_update") {
+      return {
+        ok: false,
+        error: {
+          kind: "manifest",
+          code: "plugin_not_found",
+          message: `Plugin ${JSON.stringify(change.reference)} not found in .ccx.json.`,
+        },
+      };
+    }
+    return { ok: false, error: plugins.error };
   }
 
-  const updated = { plugins };
+  const updated = { plugins: plugins.value };
   const written = manifestStore.write(projectRoot, updated);
   return written.ok ? { ok: true, value: updated } : written;
 }
@@ -334,29 +356,22 @@ export function updateProfile(
   const profile = profileStore.read(name);
   if (!profile.ok) return profile;
 
-  const parsed = change.kind === "add"
-    ? parseQualifiedPluginReference(change.reference)
-    : parseReadablePluginReference(change.reference);
-  if (!parsed.ok) return parsed;
-
-  const plugins = [...profile.value.plugins];
-  const index = plugins.indexOf(parsed.value);
-  if (change.kind === "add") {
-    if (index === -1) plugins.push(parsed.value);
-  } else if (index === -1) {
-    return {
-      ok: false,
-      error: {
-        kind: "profile",
-        code: "plugin_not_found",
-        message: `Plugin ${JSON.stringify(change.reference)} not found in profile ${JSON.stringify(name)}.`,
-      },
-    };
-  } else {
-    plugins.splice(index, 1);
+  const plugins = updatePluginReferences(profile.value.plugins, change);
+  if (!plugins.ok) {
+    if (plugins.error.kind === "reference_update") {
+      return {
+        ok: false,
+        error: {
+          kind: "profile",
+          code: "plugin_not_found",
+          message: `Plugin ${JSON.stringify(change.reference)} not found in profile ${JSON.stringify(name)}.`,
+        },
+      };
+    }
+    return { ok: false, error: plugins.error };
   }
 
-  const updated = { plugins };
+  const updated = { plugins: plugins.value };
   const written = profileStore.write(name, updated);
   return written.ok ? { ok: true, value: updated } : written;
 }

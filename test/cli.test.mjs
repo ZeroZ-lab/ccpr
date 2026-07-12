@@ -275,6 +275,10 @@ withHome((home) => {
 });
 
 withHome((home) => {
+  const noProfiles = run(["delete", "missing"], home);
+  assert.equal(noProfiles.status, 1);
+  assert.match(noProfiles.stdout + noProfiles.stderr, /No profiles found/);
+
   assert.equal(run(["create", "dev"], home).status, 0);
 
   const duplicate = run(["create", "dev"], home);
@@ -284,6 +288,13 @@ withHome((home) => {
   const missingProfile = run(["delete", "missing"], home);
   assert.equal(missingProfile.status, 1);
   assert.match(missingProfile.stdout + missingProfile.stderr, /not found/);
+
+  const emptyProfileRemoval = run(["remove", "dev", "plugin-b"], home);
+  assert.equal(emptyProfileRemoval.status, 1);
+  assert.match(
+    emptyProfileRemoval.stdout + emptyProfileRemoval.stderr,
+    /No plugins in this profile/,
+  );
 
   assert.equal(run(["add", "dev", "plugin-a"], home).status, 0);
   const missingPlugin = run(["remove", "dev", "plugin-b"], home);
@@ -1143,7 +1154,10 @@ withHome((home) => {
 
     fs.writeFileSync(
       path.join(home, ".ccx", "profiles", "legacy.json"),
-      JSON.stringify({ name: "legacy", plugins: ["bare-plugin"] }),
+      JSON.stringify({
+        name: "legacy",
+        plugins: ["bare-plugin", "duplicate@official", "duplicate@official"],
+      }),
     );
     const inspectedLegacy = run(
       ["profile", "inspect", "legacy"],
@@ -1151,10 +1165,19 @@ withHome((home) => {
       cwd,
     );
     assert.equal(inspectedLegacy.status, 0);
-    assert.equal(inspectedLegacy.stdout, "bare-plugin\n");
+    assert.match(inspectedLegacy.stdout, /bare-plugin/);
     assert.match(
       inspectedLegacy.stderr,
       /Legacy unqualified Plugin Reference.*plugin@marketplace/,
+    );
+    const legacyList = run(["list", "legacy"], home, cwd);
+    assert.equal(legacyList.status, 0);
+    assert.match(legacyList.stderr, /Legacy unqualified Plugin Reference/);
+    const nestedLegacyList = run(["legacy", "list"], home, cwd);
+    assert.equal(nestedLegacyList.status, 0);
+    assert.match(
+      nestedLegacyList.stderr,
+      /Legacy unqualified Plugin Reference/,
     );
     const removedLegacy = run(
       ["profile", "update", "--remove", "bare-plugin", "legacy"],
@@ -1167,8 +1190,13 @@ withHome((home) => {
       removedLegacy.stdout + removedLegacy.stderr,
     );
     assert.equal(
-      run(["profile", "inspect", "legacy"], home, cwd).stdout,
-      "(empty)\n",
+      JSON.parse(
+        fs.readFileSync(
+          path.join(home, ".ccx", "profiles", "legacy.json"),
+          "utf8",
+        ),
+      ).plugins.filter((plugin) => plugin === "duplicate@official").length,
+      1,
     );
 
     const removed = run(["profile", "rm", "work"], home, cwd);
