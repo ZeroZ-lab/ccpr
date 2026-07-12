@@ -5,10 +5,22 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { applyProject, inspectProject } from "./application.js";
+import {
+  applyProject,
+  commitProjectImport,
+  initializeEmptyProject,
+  initializeProjectFromProfile,
+  inspectProject,
+  prepareProjectImport,
+} from "./application.js";
 import { createClaudePluginClient } from "./claude-cli.js";
-import { routeProjectDiff, routeProjectUp } from "./presentation.js";
-import { createManifestStore } from "./stores.js";
+import {
+  routeProjectDiff,
+  routeProjectInit,
+  routeProjectImport,
+  routeProjectUp,
+} from "./presentation.js";
+import { createManifestStore, createProfileStore } from "./stores.js";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
 const MARKETPLACES_DIR = path.join(
@@ -875,6 +887,45 @@ async function main(args: string[]) {
     const require = createRequire(import.meta.url);
     const pkg = require("../package.json");
     console.log(`ccx v${pkg.version}`);
+    return;
+  }
+
+  const projectInitStatus = routeProjectInit(args, {
+    initializeEmpty: (force) =>
+      initializeEmptyProject(process.cwd(), createManifestStore(), force),
+    initializeFromProfile: (profileName, force) =>
+      initializeProjectFromProfile(
+        process.cwd(),
+        profileName,
+        {
+          manifestStore: createManifestStore(),
+          profileStore: createProfileStore(process.env.HOME!),
+        },
+        force,
+      ),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (projectInitStatus !== undefined) {
+    process.exitCode = projectInitStatus;
+    return;
+  }
+
+  const projectImportStatus = routeProjectImport(args, {
+    projectRoot: process.cwd(),
+    prepare: (projectRoot) =>
+      prepareProjectImport(projectRoot, {
+        manifestStore: createManifestStore(),
+        claudePluginClient: createClaudePluginClient(),
+      }),
+    commit: (projectRoot, preview) =>
+      commitProjectImport(projectRoot, preview, createManifestStore()),
+    isInteractive: canPrompt(),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (projectImportStatus !== undefined) {
+    process.exitCode = projectImportStatus;
     return;
   }
 

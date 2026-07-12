@@ -36,13 +36,13 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 
 **Blocked by:** Inspect Project Drift through the public CLI.
 
-- [ ] Project initialization supports explicit empty state and creation from a Profile.
-- [ ] Existing Project Manifests require TTY confirmation or an explicit force option before overwrite.
-- [ ] Non-interactive initialization without an explicit source exits 1 without writing.
-- [ ] Project import prints the exact additions/removals before any write and commits exactly the previewed Installed State.
-- [ ] Non-interactive import requires explicit approval and supports intentional empty-state import.
-- [ ] New canonical writes are deterministically ordered, deduplicated, and require qualified Plugin References.
-- [ ] Black-box tests cover create, overwrite protection, Profile source, preview-only, confirmed import, and malformed external state.
+- [x] Project initialization supports explicit empty state and creation from a Profile.
+- [x] Existing Project Manifests require TTY confirmation or an explicit force option before overwrite.
+- [x] Non-interactive initialization without an explicit source exits 1 without writing.
+- [x] Project import prints the exact additions/removals before any write and commits exactly the previewed Installed State.
+- [x] Non-interactive import requires explicit approval and supports intentional empty-state import.
+- [x] New canonical writes are deterministically ordered, deduplicated, and require qualified Plugin References.
+- [x] Black-box tests cover create, overwrite protection, Profile source, preview-only, confirmed import, and malformed external state.
 
 ## Manage Profiles and discover qualified Plugins
 

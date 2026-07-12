@@ -170,6 +170,270 @@ withHome((home) => {
 // ── Project config tests (.ccx.json) ─────────────────────
 
 withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const result = run(["project", "init", "--empty"], home, cwd);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, "Created .ccx.json with 0 plugins.\n");
+    assert.equal(
+      fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8"),
+      '{\n  "plugins": []\n}\n',
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-import-"));
+  try {
+    const manifestPath = path.join(cwd, ".ccx.json");
+    const original =
+      '{\n  "plugins": ["keep@official", "remove@official"]\n}\n';
+    fs.writeFileSync(manifestPath, original);
+    const claude = installFakeClaude(home, {
+      stdout: JSON.stringify([
+        { id: "added@official", scope: "project", projectPath: cwd },
+        { id: "keep@official", scope: "project", projectPath: cwd },
+      ]),
+    });
+
+    const result = run(["project", "import"], home, cwd, claude.env);
+
+    assert.equal(result.status, 1);
+    assert.equal(
+      result.stdout,
+      "Added:\n  added@official\nRemoved:\n  remove@official\n",
+    );
+    assert.match(result.stderr, /requires --yes/i);
+    assert.equal(fs.readFileSync(manifestPath, "utf8"), original);
+    assert.deepEqual(claude.readCalls(), [
+      { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
+    ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-import-"));
+  try {
+    const claude = installFakeClaude(home, {
+      stdout: JSON.stringify([
+        { id: "zeta@official", scope: "project", projectPath: cwd },
+        { id: "alpha@official", scope: "project", projectPath: cwd },
+        { id: "zeta@official", scope: "project", projectPath: cwd },
+      ]),
+    });
+
+    const result = run(
+      ["project", "import", "--yes"],
+      home,
+      cwd,
+      claude.env,
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(
+      result.stdout,
+      "Added:\n  alpha@official\n  zeta@official\nRemoved:\n  (none)\nImported .ccx.json with 2 plugins.\n",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8"),
+      '{\n  "plugins": [\n    "alpha@official",\n    "zeta@official"\n  ]\n}\n',
+    );
+    assert.equal(claude.readCalls().length, 1);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-import-"));
+  try {
+    const manifestPath = path.join(cwd, ".ccx.json");
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({ plugins: ["remove@official"] }),
+    );
+    const claude = installFakeClaude(home, { stdout: "[]" });
+
+    const result = run(
+      ["project", "import", "--yes"],
+      home,
+      cwd,
+      claude.env,
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      result.stdout,
+      "Added:\n  (none)\nRemoved:\n  remove@official\nImported .ccx.json with 0 plugins.\n",
+    );
+    assert.equal(
+      fs.readFileSync(manifestPath, "utf8"),
+      '{\n  "plugins": []\n}\n',
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-import-"));
+  try {
+    const manifestPath = path.join(cwd, ".ccx.json");
+    const original = '{"plugins":["keep@official"]}\n';
+    fs.writeFileSync(manifestPath, original);
+    const claude = installFakeClaude(home, { stdout: "{bad json" });
+
+    const result = run(
+      ["project", "import", "--yes"],
+      home,
+      cwd,
+      claude.env,
+    );
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Claude returned invalid JSON/);
+    assert.equal(fs.readFileSync(manifestPath, "utf8"), original);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const profileDir = path.join(home, ".ccx", "profiles");
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(profileDir, "work.json"),
+      JSON.stringify({
+        name: "work",
+        plugins: ["zeta@official", "alpha@official", "zeta@official"],
+      }),
+    );
+
+    const result = run(
+      ["project", "init", "--from-profile", "work"],
+      home,
+      cwd,
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, "Created .ccx.json with 2 plugins.\n");
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8")),
+      { plugins: ["zeta@official", "alpha@official"] },
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const profileDir = path.join(home, ".ccx", "profiles");
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(profileDir, "legacy.json"),
+      JSON.stringify({ name: "legacy", plugins: ["bare-plugin"] }),
+    );
+
+    const result = run(
+      ["project", "init", "--from-profile", "legacy"],
+      home,
+      cwd,
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Invalid qualified Plugin Reference/);
+    assert.equal(fs.existsSync(path.join(cwd, ".ccx.json")), false);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const manifestPath = path.join(cwd, ".ccx.json");
+    fs.writeFileSync(manifestPath, '{"plugins":["old@official"]}\n');
+
+    const result = run(
+      ["project", "init", "--empty", "--force"],
+      home,
+      cwd,
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      fs.readFileSync(manifestPath, "utf8"),
+      '{\n  "plugins": []\n}\n',
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const result = run(["project", "init"], home, cwd);
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(
+      result.stderr,
+      /Usage: ccx project init \(--empty \| --from-profile PROFILE\)/,
+    );
+    assert.equal(fs.existsSync(path.join(cwd, ".ccx.json")), false);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const manifestPath = path.join(cwd, ".ccx.json");
+    const original = '{"plugins":["keep@official"]}\n';
+    fs.writeFileSync(manifestPath, original);
+
+    const result = run(["project", "init", "--empty"], home, cwd);
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /\.ccx\.json already exists.*--force/i);
+    assert.equal(fs.readFileSync(manifestPath, "utf8"), original);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-init-"));
+  try {
+    const result = run(["init", "--empty"], home, cwd);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8"),
+      '{\n  "plugins": []\n}\n',
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-diff-"));
   try {
     fs.writeFileSync(
