@@ -5,7 +5,6 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { parseQualifiedPluginReference } from "./domain.js";
 import {
   applyProject,
   commitProjectImport,
@@ -29,6 +28,7 @@ import {
   routeProjectUp,
   routePluginCommand,
   routeProfileCommand,
+  renderLegacyReferenceGuidance,
 } from "./presentation.js";
 import {
   createManifestStore,
@@ -95,13 +95,8 @@ function normalizePluginName(plugin?: string) {
 }
 
 function warnLegacyPluginReferences(plugins: readonly string[]) {
-  const legacy = plugins.filter(
-    (plugin) => !parseQualifiedPluginReference(plugin).ok,
-  );
-  if (legacy.length === 0) return;
-  console.error(
-    `Legacy unqualified Plugin Reference${legacy.length === 1 ? "" : "s"}: ${legacy.join(", ")}. Replace with plugin@marketplace before the legacy compatibility window ends.`,
-  );
+  const guidance = renderLegacyReferenceGuidance(plugins);
+  if (guidance) process.stderr.write(guidance);
 }
 
 interface ProfileData {

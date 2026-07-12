@@ -150,7 +150,7 @@ function renderCatalog(plugins: readonly CatalogPlugin[]): string {
   }).join("\n")}\n`;
 }
 
-function renderLegacyReferenceGuidance(
+export function renderLegacyReferenceGuidance(
   references: readonly string[],
 ): string | undefined {
   const legacy = references.filter(
