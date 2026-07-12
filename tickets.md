@@ -50,13 +50,13 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 
 **Blocked by:** Inspect Project Drift through the public CLI.
 
-- [ ] Profile create, list, inspect, update-add, update-remove, and remove work through their canonical object commands.
-- [ ] Profile creation can copy the current Project Manifest without reading Installed State or plugin caches.
-- [ ] Profile names remain path-safe and missing/invalid data returns non-zero diagnostics.
-- [ ] Plugin list/search show marketplace-qualified identities and match identity, description, and category.
-- [ ] Catalog discovery does not claim that a plugin is installed.
-- [ ] New Profile additions require qualified Plugin References while legacy Profile data remains readable and removable.
-- [ ] Public-process tests cover the full Profile lifecycle, catalog qualification/search, duplicates, and invalid inputs.
+- [x] Profile create, list, inspect, update-add, update-remove, and remove work through their canonical object commands.
+- [x] Profile creation can copy the current Project Manifest without reading Installed State or plugin caches.
+- [x] Profile names remain path-safe and missing/invalid data returns non-zero diagnostics.
+- [x] Plugin list/search show marketplace-qualified identities and match identity, description, and category.
+- [x] Catalog discovery does not claim that a plugin is installed.
+- [x] New Profile additions require qualified Plugin References while legacy Profile data remains readable and removable.
+- [x] Public-process tests cover the full Profile lifecycle, catalog qualification/search, duplicates, and invalid inputs.
 
 ## Unify the project-first TTY and ccx 0.1 migration bridge
 

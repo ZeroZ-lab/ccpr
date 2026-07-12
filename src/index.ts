@@ -8,10 +8,16 @@ import pc from "picocolors";
 import {
   applyProject,
   commitProjectImport,
+  createProfile,
   initializeEmptyProject,
   initializeProjectFromProfile,
   inspectProject,
+  listCatalogPlugins,
+  listProfileSummaries,
   prepareProjectImport,
+  removeProfileTemplate,
+  searchCatalogPlugins,
+  updateProfile,
 } from "./application.js";
 import { createClaudePluginClient } from "./claude-cli.js";
 import {
@@ -19,8 +25,14 @@ import {
   routeProjectInit,
   routeProjectImport,
   routeProjectUp,
+  routePluginCommand,
+  routeProfileCommand,
 } from "./presentation.js";
-import { createManifestStore, createProfileStore } from "./stores.js";
+import {
+  createManifestStore,
+  createMarketplaceCatalogStore,
+  createProfileStore,
+} from "./stores.js";
 
 const PROFILES_DIR = path.join(process.env.HOME!, ".ccx", "profiles");
 const MARKETPLACES_DIR = path.join(
@@ -887,6 +899,44 @@ async function main(args: string[]) {
     const require = createRequire(import.meta.url);
     const pkg = require("../package.json");
     console.log(`ccx v${pkg.version}`);
+    return;
+  }
+
+  const profileStore = createProfileStore(process.env.HOME!);
+  const profileCommandStatus = routeProfileCommand(args, {
+    create: (name, fromProject) =>
+      createProfile(
+        name,
+        fromProject
+          ? {
+              kind: "project",
+              projectRoot: process.cwd(),
+              manifestStore: createManifestStore(),
+            }
+          : { kind: "empty" },
+        profileStore,
+      ),
+    list: () => listProfileSummaries(profileStore),
+    inspect: (name) => profileStore.read(name),
+    update: (name, change) => updateProfile(name, change, profileStore),
+    remove: (name) => removeProfileTemplate(name, profileStore),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (profileCommandStatus !== undefined) {
+    process.exitCode = profileCommandStatus;
+    return;
+  }
+
+  const catalogStore = createMarketplaceCatalogStore(process.env.HOME!);
+  const pluginCommandStatus = routePluginCommand(args, {
+    list: () => listCatalogPlugins(catalogStore),
+    search: (keyword) => searchCatalogPlugins(keyword, catalogStore),
+    writeStdout: (output) => process.stdout.write(output),
+    writeStderr: (output) => process.stderr.write(output),
+  });
+  if (pluginCommandStatus !== undefined) {
+    process.exitCode = pluginCommandStatus;
     return;
   }
 

@@ -2,12 +2,15 @@ import type {
   ApplyError,
   ApplyProjectError,
   ApplyReport,
+  CatalogPlugin,
   ImportPreview,
   InitializeProjectResult,
   InspectProjectError,
+  ProfileActionResult,
+  ProfileSummary,
   StoreError,
 } from "./application.js";
-import type { Drift, Result } from "./domain.js";
+import type { Drift, ProjectManifest, Result } from "./domain.js";
 
 export interface ProjectDiffPresentation {
   readonly projectRoot: string;
@@ -48,6 +51,31 @@ export interface ProjectImportPresentation {
   ) => Result<void, StoreError>;
   readonly isInteractive: boolean;
   readonly confirm?: (preview: ImportPreview) => boolean;
+  readonly writeStdout: (output: string) => void;
+  readonly writeStderr: (output: string) => void;
+}
+
+export interface ProfileCommandPresentation {
+  readonly create: (
+    name: string,
+    fromProject: boolean,
+  ) => ProfileActionResult<ProjectManifest>;
+  readonly list: () => Result<readonly ProfileSummary[], StoreError>;
+  readonly inspect: (name: string) => Result<ProjectManifest, StoreError>;
+  readonly update: (
+    name: string,
+    change: { readonly kind: "add" | "remove"; readonly reference: string },
+  ) => ProfileActionResult<ProjectManifest>;
+  readonly remove: (name: string) => Result<void, StoreError>;
+  readonly writeStdout: (output: string) => void;
+  readonly writeStderr: (output: string) => void;
+}
+
+export interface PluginCommandPresentation {
+  readonly list: () => Result<readonly CatalogPlugin[], StoreError>;
+  readonly search: (
+    keyword: string,
+  ) => Result<readonly CatalogPlugin[], StoreError>;
   readonly writeStdout: (output: string) => void;
   readonly writeStderr: (output: string) => void;
 }
@@ -98,6 +126,134 @@ function renderInspectionError(error: InspectProjectError): string {
     if (error.stdout?.trim()) lines.push(error.stdout.trim());
   }
   return `${lines.join("\n")}\n`;
+}
+
+function renderCatalog(plugins: readonly CatalogPlugin[]): string {
+  if (plugins.length === 0) return "No plugins found.\n";
+  return `${plugins.map((plugin) => {
+    const details = [plugin.category, plugin.description]
+      .filter(Boolean)
+      .join(" — ");
+    return details ? `${plugin.reference}  ${details}` : plugin.reference;
+  }).join("\n")}\n`;
+}
+
+export function routeProfileCommand(
+  args: readonly string[],
+  presentation: ProfileCommandPresentation,
+): number | undefined {
+  if (args[0] !== "profile") return undefined;
+
+  const action = args[1];
+  if (action === "create") {
+    const fromProject = args[2] === "--from-project";
+    const name = fromProject ? args[3] : args[2];
+    const valid = Boolean(name) && args.length === (fromProject ? 4 : 3);
+    if (!valid) {
+      presentation.writeStderr(
+        "Usage: ccx profile create [--from-project] NAME\n",
+      );
+      return 1;
+    }
+    const created = presentation.create(name, fromProject);
+    if (!created.ok) {
+      presentation.writeStderr(`${created.error.message}\n`);
+      return 1;
+    }
+    presentation.writeStdout(
+      `Created profile ${JSON.stringify(name)} with ${created.value.plugins.length} plugins.\n`,
+    );
+    return 0;
+  }
+
+  if (action === "ls" && args.length === 2) {
+    const profiles = presentation.list();
+    if (!profiles.ok) {
+      presentation.writeStderr(`${profiles.error.message}\n`);
+      return 1;
+    }
+    presentation.writeStdout(
+      profiles.value.length === 0
+        ? "No profiles found.\n"
+        : `${profiles.value.map(({ name, pluginCount }) =>
+          `${name}  (${pluginCount} plugins)`
+        ).join("\n")}\n`,
+    );
+    return 0;
+  }
+
+  if (action === "inspect" && args.length === 3) {
+    const profile = presentation.inspect(args[2]);
+    if (!profile.ok) {
+      presentation.writeStderr(`${profile.error.message}\n`);
+      return 1;
+    }
+    presentation.writeStdout(
+      profile.value.plugins.length === 0
+        ? "(empty)\n"
+        : `${profile.value.plugins.join("\n")}\n`,
+    );
+    return 0;
+  }
+
+  if (
+    action === "update" &&
+    args.length === 5 &&
+    (args[2] === "--add" || args[2] === "--remove")
+  ) {
+    const kind = args[2] === "--add" ? "add" : "remove";
+    const updated = presentation.update(args[4], {
+      kind,
+      reference: args[3],
+    });
+    if (!updated.ok) {
+      presentation.writeStderr(`${updated.error.message}\n`);
+      return 1;
+    }
+    presentation.writeStdout(
+      `${kind === "add" ? "Added" : "Removed"} ${JSON.stringify(args[3])} ${kind === "add" ? "to" : "from"} profile ${JSON.stringify(args[4])}.\n`,
+    );
+    return 0;
+  }
+
+  if (action === "rm" && args.length === 3) {
+    const removed = presentation.remove(args[2]);
+    if (!removed.ok) {
+      presentation.writeStderr(`${removed.error.message}\n`);
+      return 1;
+    }
+    presentation.writeStdout(`Removed profile ${JSON.stringify(args[2])}.\n`);
+    return 0;
+  }
+
+  presentation.writeStderr(
+    "Usage: ccx profile <create|ls|inspect|update|rm> ...\n",
+  );
+  return 1;
+}
+
+export function routePluginCommand(
+  args: readonly string[],
+  presentation: PluginCommandPresentation,
+): number | undefined {
+  if (args[0] !== "plugin") return undefined;
+
+  let plugins: Result<readonly CatalogPlugin[], StoreError>;
+  if (args[1] === "ls" && args.length === 2) {
+    plugins = presentation.list();
+  } else if (args[1] === "search" && args.length === 3) {
+    plugins = presentation.search(args[2]);
+  } else {
+    presentation.writeStderr("Usage: ccx plugin <ls | search KEYWORD>\n");
+    return 1;
+  }
+
+  if (!plugins.ok) {
+    presentation.writeStderr(`${plugins.error.message}\n`);
+    return 1;
+  }
+  presentation.writeStdout(renderCatalog(plugins.value));
+  return 0;
 }
 
 export function routeProjectInit(

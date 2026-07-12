@@ -1,6 +1,7 @@
 import {
   calculateDrift,
   parseQualifiedPluginReference,
+  parseReadablePluginReference,
   type DomainError,
   type Drift,
   type InstalledState,
@@ -17,7 +18,7 @@ export interface StoreError {
     | "invalid_data"
     | "read_failed"
     | "write_failed";
-  readonly subject: "manifest" | "profile";
+  readonly subject: "manifest" | "profile" | "catalog";
   readonly path: string;
   readonly message: string;
 }
@@ -42,7 +43,22 @@ export interface ManifestStore {
 }
 
 export interface ProfileStore {
+  exists(name: string): Result<boolean, StoreError>;
+  list(): Result<readonly string[], StoreError>;
   read(name: string): Result<ProjectManifest, StoreError>;
+  write(name: string, manifest: ProjectManifest): Result<void, StoreError>;
+  remove(name: string): Result<void, StoreError>;
+}
+
+export interface CatalogPlugin {
+  readonly reference: PluginReference;
+  readonly description: string;
+  readonly category?: string;
+  readonly marketplace: string;
+}
+
+export interface MarketplaceCatalogStore {
+  list(): Result<readonly CatalogPlugin[], StoreError>;
 }
 
 export interface ClaudePluginClient {
@@ -192,6 +208,156 @@ export function commitProjectImport(
   manifestStore: ManifestStore,
 ): Result<void, StoreError> {
   return manifestStore.write(projectRoot, preview.manifest);
+}
+
+export interface ProfileActionError {
+  readonly kind: "profile";
+  readonly code: "already_exists" | "plugin_not_found";
+  readonly message: string;
+}
+
+export type ProfileActionResult<T> = Result<
+  T,
+  StoreError | DomainError | ProfileActionError
+>;
+
+function normalizeQualifiedReferences(
+  candidates: readonly PluginReference[],
+): Result<readonly PluginReference[], DomainError> {
+  const plugins: PluginReference[] = [];
+  const seen = new Set<PluginReference>();
+  for (const candidate of candidates) {
+    const reference = parseQualifiedPluginReference(candidate);
+    if (!reference.ok) return reference;
+    if (!seen.has(reference.value)) {
+      seen.add(reference.value);
+      plugins.push(reference.value);
+    }
+  }
+  return { ok: true, value: plugins };
+}
+
+export function createProfile(
+  name: string,
+  source: { readonly kind: "empty" } | {
+    readonly kind: "project";
+    readonly projectRoot: string;
+    readonly manifestStore: ManifestStore;
+  },
+  profileStore: ProfileStore,
+): ProfileActionResult<ProjectManifest> {
+  const exists = profileStore.exists(name);
+  if (!exists.ok) return exists;
+  if (exists.value) {
+    return {
+      ok: false,
+      error: {
+        kind: "profile",
+        code: "already_exists",
+        message: `Profile ${JSON.stringify(name)} already exists.`,
+      },
+    };
+  }
+
+  let sourceManifest: ProjectManifest;
+  if (source.kind === "empty") {
+    sourceManifest = { plugins: [] };
+  } else {
+    const manifest = source.manifestStore.read(source.projectRoot);
+    if (!manifest.ok) return manifest;
+    sourceManifest = manifest.value;
+  }
+  const normalized = normalizeQualifiedReferences(sourceManifest.plugins);
+  if (!normalized.ok) return normalized;
+
+  const profile = { plugins: normalized.value };
+  const written = profileStore.write(name, profile);
+  return written.ok ? { ok: true, value: profile } : written;
+}
+
+export interface ProfileSummary {
+  readonly name: string;
+  readonly pluginCount: number;
+}
+
+export function listProfileSummaries(
+  profileStore: ProfileStore,
+): Result<readonly ProfileSummary[], StoreError> {
+  const names = profileStore.list();
+  if (!names.ok) return names;
+
+  const summaries: ProfileSummary[] = [];
+  for (const name of names.value) {
+    const profile = profileStore.read(name);
+    if (!profile.ok) return profile;
+    summaries.push({ name, pluginCount: profile.value.plugins.length });
+  }
+  return { ok: true, value: summaries };
+}
+
+export function updateProfile(
+  name: string,
+  change: { readonly kind: "add" | "remove"; readonly reference: string },
+  profileStore: ProfileStore,
+): ProfileActionResult<ProjectManifest> {
+  const profile = profileStore.read(name);
+  if (!profile.ok) return profile;
+
+  const parsed = change.kind === "add"
+    ? parseQualifiedPluginReference(change.reference)
+    : parseReadablePluginReference(change.reference);
+  if (!parsed.ok) return parsed;
+
+  const plugins = [...profile.value.plugins];
+  const index = plugins.indexOf(parsed.value);
+  if (change.kind === "add") {
+    if (index === -1) plugins.push(parsed.value);
+  } else if (index === -1) {
+    return {
+      ok: false,
+      error: {
+        kind: "profile",
+        code: "plugin_not_found",
+        message: `Plugin ${JSON.stringify(change.reference)} not found in profile ${JSON.stringify(name)}.`,
+      },
+    };
+  } else {
+    plugins.splice(index, 1);
+  }
+
+  const updated = { plugins };
+  const written = profileStore.write(name, updated);
+  return written.ok ? { ok: true, value: updated } : written;
+}
+
+export function removeProfileTemplate(
+  name: string,
+  profileStore: ProfileStore,
+): Result<void, StoreError> {
+  return profileStore.remove(name);
+}
+
+export function listCatalogPlugins(
+  catalogStore: MarketplaceCatalogStore,
+): Result<readonly CatalogPlugin[], StoreError> {
+  return catalogStore.list();
+}
+
+export function searchCatalogPlugins(
+  keyword: string,
+  catalogStore: MarketplaceCatalogStore,
+): Result<readonly CatalogPlugin[], StoreError> {
+  const catalog = catalogStore.list();
+  if (!catalog.ok) return catalog;
+  const query = keyword.trim().toLowerCase();
+  return {
+    ok: true,
+    value: catalog.value.filter((plugin) =>
+      plugin.reference.toLowerCase().includes(query) ||
+      plugin.description.toLowerCase().includes(query) ||
+      (plugin.category || "").toLowerCase().includes(query)
+    ),
+  };
 }
 
 export interface ApplyReport {

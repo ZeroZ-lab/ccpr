@@ -900,3 +900,137 @@ withHome((home) => {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+// ── Canonical Profile and Plugin commands ────────────────
+
+withHome((home) => {
+  const created = run(["profile", "create", "work"], home);
+  assert.equal(created.status, 0, created.stdout + created.stderr);
+  assert.equal(created.stdout, 'Created profile "work" with 0 plugins.\n');
+  assert.equal(created.stderr, "");
+
+  const listed = run(["profile", "ls"], home);
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+  assert.equal(listed.stdout, "work  (0 plugins)\n");
+
+  const inspected = run(["profile", "inspect", "work"], home);
+  assert.equal(inspected.status, 0, inspected.stdout + inspected.stderr);
+  assert.equal(inspected.stdout, "(empty)\n");
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-profile-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({
+        plugins: ["zeta@official", "alpha@official", "zeta@official"],
+      }),
+    );
+
+    const created = run(
+      ["profile", "create", "--from-project", "work"],
+      home,
+      cwd,
+    );
+    assert.equal(created.status, 0, created.stdout + created.stderr);
+    assert.deepEqual(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(home, ".ccx", "profiles", "work.json"),
+          "utf8",
+        ),
+      ),
+      { name: "work", plugins: ["zeta@official", "alpha@official"] },
+    );
+
+    assert.equal(
+      run(
+        ["profile", "update", "--add", "beta@official", "work"],
+        home,
+        cwd,
+      ).status,
+      0,
+    );
+    const invalidAdd = run(
+      ["profile", "update", "--add", "bare-plugin", "work"],
+      home,
+      cwd,
+    );
+    assert.equal(invalidAdd.status, 1);
+    assert.match(invalidAdd.stderr, /qualified Plugin Reference/);
+
+    fs.writeFileSync(
+      path.join(home, ".ccx", "profiles", "legacy.json"),
+      JSON.stringify({ name: "legacy", plugins: ["bare-plugin"] }),
+    );
+    const removedLegacy = run(
+      ["profile", "update", "--remove", "bare-plugin", "legacy"],
+      home,
+      cwd,
+    );
+    assert.equal(
+      removedLegacy.status,
+      0,
+      removedLegacy.stdout + removedLegacy.stderr,
+    );
+    assert.equal(
+      run(["profile", "inspect", "legacy"], home, cwd).stdout,
+      "(empty)\n",
+    );
+
+    const removed = run(["profile", "rm", "work"], home, cwd);
+    assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+    assert.equal(
+      fs.existsSync(path.join(home, ".ccx", "profiles", "work.json")),
+      false,
+    );
+
+    const unsafe = run(["profile", "create", "../outside"], home, cwd);
+    assert.equal(unsafe.status, 1);
+    assert.match(unsafe.stderr, /Invalid profile name/);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const marketplaceDir = path.join(
+    home,
+    ".claude",
+    "plugins",
+    "marketplaces",
+    "team-source",
+    ".claude-plugin",
+  );
+  fs.mkdirSync(marketplaceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(marketplaceDir, "marketplace.json"),
+    JSON.stringify({
+      name: "team",
+      plugins: [
+        {
+          name: "formatter",
+          description: "Formats project files",
+          category: "quality",
+        },
+        {
+          name: "browser",
+          description: "Controls a browser",
+          category: "tools",
+        },
+      ],
+    }),
+  );
+
+  const listed = run(["plugin", "ls"], home);
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+  assert.match(listed.stdout, /browser@team/);
+  assert.match(listed.stdout, /formatter@team/);
+  assert.doesNotMatch(listed.stdout, /installed/i);
+
+  const searched = run(["plugin", "search", "quality"], home);
+  assert.equal(searched.status, 0, searched.stdout + searched.stderr);
+  assert.match(searched.stdout, /formatter@team/);
+  assert.doesNotMatch(searched.stdout, /browser@team/);
+});
