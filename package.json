@@ -1,6 +1,6 @@
 {
   "name": "@guanmu/ccprofile",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Project Plugin Environment Manager for Claude Code",
   "type": "module",
   "bin": {
