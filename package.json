@@ -1,7 +1,7 @@
 {
   "name": "@guanmu/ccprofile",
-  "version": "0.1.19",
-  "description": "Agent Profile Manager for Claude Code",
+  "version": "0.2.0",
+  "description": "Project Plugin Environment Manager for Claude Code",
   "type": "module",
   "bin": {
     "ccx": "./dist/index.js"

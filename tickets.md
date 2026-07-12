@@ -64,11 +64,11 @@ Work the **frontier**: any ticket whose blockers are all done. Each ticket is a 
 
 **Blocked by:** Safely bring the Project Plugin Environment up; Initialize and import Project Manifests safely; Manage Profiles and discover qualified Plugins.
 
-- [ ] No-argument TTY starts from the current project, shows Drift when a Project Manifest exists, and offers initialization when it does not.
-- [ ] TTY Project, Profile, and Plugin actions call the same operations and return the same result semantics as command mode.
-- [ ] Complete non-TTY invocations never prompt, colorize, or animate; results use stdout and warnings/errors use stderr.
-- [ ] Every ccx 0.1 command and alias listed in the public command contract still works during 0.2 and prints one canonical replacement notice when deprecated.
-- [ ] Unknown canonical commands are not interpreted as Profile names; ambiguous legacy routing remains isolated for removal in 0.3.
-- [ ] Help and README describe the Project Plugin Environment, Docker-style commands, TTY journey, migration window, exit statuses, and qualified Plugin References.
-- [ ] The package identifies as 0.2.0 without publishing or creating a release.
+- [x] No-argument TTY starts from the current project, shows Drift when a Project Manifest exists, and offers initialization when it does not.
+- [x] TTY Project, Profile, and Plugin actions call the same operations and return the same result semantics as command mode.
+- [x] Complete non-TTY invocations never prompt, colorize, or animate; results use stdout and warnings/errors use stderr.
+- [x] Every ccx 0.1 command and alias listed in the public command contract still works during 0.2 and prints one canonical replacement notice when deprecated.
+- [x] Unknown canonical commands are not interpreted as Profile names; ambiguous legacy routing remains isolated for removal in 0.3.
+- [x] Help and README describe the Project Plugin Environment, Docker-style commands, TTY journey, migration window, exit statuses, and qualified Plugin References.
+- [x] The package identifies as 0.2.0 without publishing or creating a release.
 - [ ] Full build, black-box test suite, diff checks, and two-axis code review pass.

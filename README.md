@@ -8,127 +8,116 @@
   \____/ \____/ /_/ \_\
 ```
 
-Agent Profile Manager for Claude Code.
+Project Plugin Environment Manager for Claude Code.
 
-`ccx` lets you save named Claude Code plugin profiles and install a whole profile into the current project with one command. It is designed as a command-first CLI, with a lightweight interactive wizard for manual use.
+ccx keeps the plugins expected by a project in a version-controlled `.ccx.json`, shows Drift from the project-scoped plugins Claude Code actually reports, and installs only what is missing. Personal Profiles remain reusable templates for creating Project Manifests.
 
-## Installation
+## Install
 
 ```bash
 npm install -g @guanmu/ccprofile
-```
-
-Or with Bun:
-
-```bash
-bun add -g @guanmu/ccprofile@latest
-```
-
-Verify the installed version:
-
-```bash
 ccx --version
 ```
 
-## Quick Start
+Node.js 20.12 or newer and the `claude` CLI are required.
+
+## Project workflow
+
+Create a Project Manifest, inspect Drift, and bring the environment up:
 
 ```bash
-ccx create dev
-ccx add dev cc-design
-ccx add dev browser
-ccx list dev
-ccx install dev
+ccx init --empty
+ccx diff
+ccx up
 ```
 
-`ccx install dev` runs `claude plugin install <plugin> --scope project` for every plugin in the `dev` profile.
-
-## Commands
+Project commands also have canonical Docker-style object forms:
 
 ```bash
-ccx                            # Interactive wizard, TTY only
-ccx ui                         # Interactive wizard, TTY only
-
-ccx install <profile>          # Install all plugins from a profile
-ccx create <name>              # Create a profile
-ccx delete <name>              # Delete a profile
-ccx profiles                   # List all profiles
-
-ccx add <profile> <plugin>     # Add a plugin to a profile
-ccx remove <profile> <plugin>  # Remove a plugin from a profile
-ccx list <profile>             # List plugins in a profile
-ccx search <keyword>           # Search plugins in installed marketplaces
-
-ccx --version                  # Show version
-ccx --help                     # Show help
+ccx project init --empty
+ccx project init --from-profile work
+ccx project diff
+ccx project up
+ccx project import
+ccx project import --yes
 ```
 
-Legacy aliases are still supported:
+- `init` writes `.ccx.json`; an existing file requires TTY confirmation or `--force`.
+- `diff` shows `Missing` and `Undeclared`. It never changes state.
+- `up` installs only `Missing` plugins with Claude Code project scope. It never uninstalls `Undeclared` plugins.
+- `import` previews additions/removals before capturing Installed State. Non-interactive use requires `--yes`.
 
-```bash
-ccx <profile>                  # Same as ccx install <profile>
-ccx <profile> add [plugin]
-ccx <profile> remove [plugin]
-ccx <profile> list
-ccx add <name>                 # Same as ccx create <name>
-ccx remove <name>              # Same as ccx delete <name>
-ccx list                       # Same as ccx profiles
-```
+`diff` exits `0` when clean, `2` when Drift exists, and `1` when inspection fails. Other commands exit `0` on success and `1` for usage, runtime, or partial Apply failure.
 
-## Interactive Wizard
+## Project Manifest
 
-Run:
-
-```bash
-ccx
-```
-
-The wizard is grouped into lightweight pages:
-
-- `Install` - install plugins from a profile
-- `Profiles` - create, list, and delete profiles
-- `Plugins` - add, remove, and list profile plugins
-- `Marketplace` - search installed plugin marketplaces
-- `Help` - print command usage
-
-The wizard only runs in a real TTY. In scripts, CI, or agent execution environments, use the command form instead.
-
-## Profiles
-
-Profiles are stored as JSON files under:
-
-```text
-~/.ccx/profiles/
-```
-
-Example profile:
+`.ccx.json` contains an ordered set of marketplace-qualified Plugin References:
 
 ```json
 {
-  "name": "dev",
   "plugins": [
-    "cc-design",
-    "browser"
+    "frontend-design@claude-plugins-official",
+    "browser@team-tools"
   ]
 }
 ```
 
-Profile names may contain letters, numbers, dots, underscores, and hyphens.
+New canonical writes require `plugin@marketplace`. Legacy bare names remain readable for migration but are not guessed or silently qualified.
 
-## Marketplace Search
+Installed State comes from `claude plugin list --json`, filtered to project scope and the normalized current project path. ccx does not infer installation from `.claude/plugins/` or cache directories.
 
-`ccx search <keyword>` reads Claude plugin marketplaces from:
+## Profiles
 
-```text
-~/.claude/plugins/marketplaces/
+Profiles are user-scoped templates stored under `~/.ccx/profiles/`:
+
+```bash
+ccx profile create work
+ccx profile create --from-project work
+ccx profile ls
+ccx profile inspect work
+ccx profile update --add browser@team-tools work
+ccx profile update --remove browser@team-tools work
+ccx profile rm work
 ```
 
-Search matches plugin name, description, or category. Invalid marketplace files are skipped with a warning.
+Use `ccx project init --from-profile work` to create project desired state from a Profile. The Profile is not authoritative after initialization.
 
-## Requirements
+## Plugin discovery
 
-- Node.js 20.12 or newer
-- Claude Code CLI available as `claude`
-- Claude plugin marketplaces installed if you want marketplace search
+```bash
+ccx plugin ls
+ccx plugin search frontend
+```
+
+Discovery reads installed marketplace catalogs and prints qualified references. Catalog presence does not imply a plugin is installed.
+
+## Interactive mode
+
+Run `ccx` or `ccx ui` in a TTY. The first screen is the current project:
+
+- without `.ccx.json`: initialize a manifest, manage Profiles, or browse the catalog;
+- with `.ccx.json`: view Drift, run Up, Import Installed State, manage Profiles, or browse the catalog.
+
+The TTY calls the same application operations as command mode. In scripts, CI, and agent environments, complete commands never prompt or animate; normal results go to stdout and warnings/errors go to stderr.
+
+## Migrating from ccx 0.1
+
+ccx 0.2 keeps 0.1 commands working and prints the canonical replacement to stderr. Ambiguous forms are scheduled for removal in ccx 0.3.
+
+| ccx 0.1 | ccx 0.2 canonical command |
+| --- | --- |
+| `ccx install` | `ccx project up` |
+| `ccx sync` | `ccx project import --yes` |
+| `ccx save NAME` | `ccx profile create --from-project NAME` |
+| `ccx create NAME` | `ccx profile create NAME` |
+| `ccx delete NAME` | `ccx profile rm NAME` |
+| `ccx profiles` / `ccx list` | `ccx profile ls` |
+| `ccx add PROFILE PLUGIN` | `ccx profile update --add PLUGIN PROFILE` |
+| `ccx remove PROFILE PLUGIN` | `ccx profile update --remove PLUGIN PROFILE` |
+| `ccx list PROFILE` | `ccx profile inspect PROFILE` |
+| `ccx search KEYWORD` | `ccx plugin search KEYWORD` |
+
+Direct Profile installation remains available during 0.2 for compatibility but does not create a Project Manifest. Prefer initializing from the Profile and then running `ccx up`.
 
 ## Development
 
@@ -138,17 +127,4 @@ pnpm run build
 pnpm test
 ```
 
-Run from source:
-
-```bash
-pnpm run dev
-```
-
-## Release
-
-This package is published to npm from GitHub Releases.
-
-1. Bump `package.json`.
-2. Commit and push to `master`.
-3. Create a GitHub release tag like `v0.1.10`.
-4. The `Publish to npm` workflow builds and publishes the package.
+The npm package is published from GitHub Releases. Publishing and release creation are intentionally separate from implementation changes.

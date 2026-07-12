@@ -36,6 +36,13 @@ export interface ProjectInitPresentation {
     profileName: string,
     force: boolean,
   ) => InitializeProjectResult;
+  readonly isInteractive: boolean;
+  readonly chooseSource?: () => Promise<
+    | { readonly kind: "empty" }
+    | { readonly kind: "profile"; readonly name: string }
+    | undefined
+  >;
+  readonly confirmOverwrite?: () => Promise<boolean>;
   readonly writeStdout: (output: string) => void;
   readonly writeStderr: (output: string) => void;
 }
@@ -50,7 +57,7 @@ export interface ProjectImportPresentation {
     preview: ImportPreview,
   ) => Result<void, StoreError>;
   readonly isInteractive: boolean;
-  readonly confirm?: (preview: ImportPreview) => boolean;
+  readonly confirm?: (preview: ImportPreview) => Promise<boolean>;
   readonly writeStdout: (output: string) => void;
   readonly writeStderr: (output: string) => void;
 }
@@ -256,24 +263,38 @@ export function routePluginCommand(
   return 0;
 }
 
-export function routeProjectInit(
+export async function routeProjectInit(
   args: readonly string[],
   presentation: ProjectInitPresentation,
-): number | undefined {
+): Promise<number | undefined> {
   const isAlias = args[0] === "init";
   const isCanonical = args[0] === "project" && args[1] === "init";
   if (!isAlias && !isCanonical) return undefined;
 
   const options = args.slice(isAlias ? 1 : 2);
-  const isEmpty =
+  let isEmpty =
     options[0] === "--empty" &&
     (options.length === 1 ||
       (options.length === 2 && options[1] === "--force"));
-  const isFromProfile =
+  let isFromProfile =
     options[0] === "--from-profile" &&
     Boolean(options[1]) &&
     (options.length === 2 ||
       (options.length === 3 && options[2] === "--force"));
+  let profileName = isFromProfile ? options[1] : undefined;
+  if (
+    !isEmpty &&
+    !isFromProfile &&
+    options.length === 0 &&
+    presentation.isInteractive &&
+    presentation.chooseSource
+  ) {
+    const source = await presentation.chooseSource();
+    if (!source) return 0;
+    isEmpty = source.kind === "empty";
+    isFromProfile = source.kind === "profile";
+    profileName = source.kind === "profile" ? source.name : undefined;
+  }
   if (!isEmpty && !isFromProfile) {
     presentation.writeStderr(
       "Usage: ccx project init (--empty | --from-profile PROFILE) [--force]\n",
@@ -282,9 +303,22 @@ export function routeProjectInit(
   }
 
   const force = options.at(-1) === "--force";
-  const initialized = isEmpty
+  let initialized = isEmpty
     ? presentation.initializeEmpty(force)
-    : presentation.initializeFromProfile(options[1], force);
+    : presentation.initializeFromProfile(profileName!, force);
+  if (
+    !initialized.ok &&
+    initialized.error.kind === "init" &&
+    initialized.error.code === "manifest_exists" &&
+    presentation.isInteractive &&
+    presentation.confirmOverwrite
+  ) {
+    const overwrite = await presentation.confirmOverwrite();
+    if (!overwrite) return 0;
+    initialized = isEmpty
+      ? presentation.initializeEmpty(true)
+      : presentation.initializeFromProfile(profileName!, true);
+  }
   if (!initialized.ok) {
     presentation.writeStderr(`${initialized.error.message}\n`);
     return 1;
@@ -296,10 +330,10 @@ export function routeProjectInit(
   return 0;
 }
 
-export function routeProjectImport(
+export async function routeProjectImport(
   args: readonly string[],
   presentation: ProjectImportPresentation,
-): number | undefined {
+): Promise<number | undefined> {
   const isCanonical = args[0] === "project" && args[1] === "import";
   if (!isCanonical) return undefined;
 
@@ -326,7 +360,7 @@ export function routeProjectImport(
 
   let approved = args[2] === "--yes";
   if (!approved && presentation.isInteractive && presentation.confirm) {
-    approved = presentation.confirm(prepared.value);
+    approved = await presentation.confirm(prepared.value);
     if (!approved) return 0;
   }
   if (!approved) {

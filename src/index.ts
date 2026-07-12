@@ -569,6 +569,26 @@ async function browsePlugins(currentProfile?: string): Promise<string[]> {
 }
 
 async function installPlugins(plugins: string[], label: string) {
+  if (!canPrompt()) {
+    let installed = 0;
+    let failed = 0;
+    for (const plugin of plugins) {
+      try {
+        execFileSync("claude", ["plugin", "install", plugin, "--scope", "project"], {
+          stdio: "pipe",
+        });
+        installed++;
+        console.log(`Installed ${plugin}`);
+      } catch {
+        failed++;
+        console.error(`Failed to install ${plugin}`);
+      }
+    }
+    console.log(`${installed} installed${failed > 0 ? `, ${failed} failed` : ""}`);
+    if (failed > 0) process.exitCode = 1;
+    return;
+  }
+
   const s = p.spinner();
   s.start(`Installing ${plugins.length} plugin(s) from "${label}"...`);
 
@@ -587,7 +607,8 @@ async function installPlugins(plugins: string[], label: string) {
     }
   }
   s.stop(`${installed} installed${failed > 0 ? `, ${failed} failed` : ""}`);
-  p.log.success("Done.");
+  if (failed > 0) process.exitCode = 1;
+  else p.log.success("Done.");
 }
 
 async function executeProfile(profileName: string) {
@@ -743,8 +764,150 @@ function printBanner() {
 
   console.log(`${renderLogo()}\n`);
   p.note(
-    pc.bold("ccx") + pc.dim(" - Agent Profile Manager  ") + pc.gray(`v${pkg.version}`),
+    pc.bold("ccx") + pc.dim(" - Project Plugin Environment  ") + pc.gray(`v${pkg.version}`),
   );
+}
+
+function renderPluginReferences(plugins: readonly string[]): string {
+  return plugins.length === 0
+    ? pc.dim("  (none)")
+    : plugins.map((plugin) => `  ${pc.dim("•")} ${plugin}`).join("\n");
+}
+
+async function interactiveProfiles() {
+  const store = createProfileStore(process.env.HOME!);
+  while (true) {
+    const profiles = listProfileSummaries(store);
+    if (!profiles.ok) {
+      p.log.error(profiles.error.message);
+      return;
+    }
+    const selected = await p.select({
+      message: "Profiles:",
+      options: [
+        ...profiles.value.map((profile) => ({
+          value: profile.name,
+          label: profile.name,
+          hint: `${profile.pluginCount} plugins`,
+        })),
+        { value: "__create__", label: "Create empty profile" },
+        { value: "__from_project__", label: "Create from Project Manifest" },
+        { value: "__back__", label: "Back" },
+      ],
+    });
+    if (p.isCancel(selected) || selected === "__back__") return;
+
+    if (selected === "__create__" || selected === "__from_project__") {
+      const name = await p.text({ message: "Profile name:" });
+      if (p.isCancel(name)) continue;
+      const created = createProfile(
+        name,
+        selected === "__from_project__"
+          ? {
+              kind: "project",
+              projectRoot: process.cwd(),
+              manifestStore: createManifestStore(),
+            }
+          : { kind: "empty" },
+        store,
+      );
+      if (created.ok) {
+        p.log.success(`Created profile ${JSON.stringify(name)}.`);
+      } else {
+        p.log.error(created.error.message);
+      }
+      continue;
+    }
+
+    const name = selected as string;
+    const profile = store.read(name);
+    if (!profile.ok) {
+      p.log.error(profile.error.message);
+      continue;
+    }
+    p.note(renderPluginReferences(profile.value.plugins), name);
+    const action = await p.select({
+      message: `Profile ${name}:`,
+      options: [
+        { value: "add", label: "Add Plugin Reference" },
+        { value: "remove", label: "Remove Plugin Reference" },
+        { value: "delete", label: "Delete profile" },
+        { value: "back", label: "Back" },
+      ],
+    });
+    if (p.isCancel(action) || action === "back") continue;
+
+    if (action === "add") {
+      const reference = await p.text({
+        message: "Plugin Reference (plugin@marketplace):",
+      });
+      if (p.isCancel(reference)) continue;
+      const updated = updateProfile(
+        name,
+        { kind: "add", reference },
+        store,
+      );
+      if (updated.ok) p.log.success(`Added ${reference}.`);
+      else p.log.error(updated.error.message);
+    } else if (action === "remove") {
+      if (profile.value.plugins.length === 0) {
+        p.log.warn("Profile is empty.");
+        continue;
+      }
+      const reference = await p.select({
+        message: "Remove Plugin Reference:",
+        options: profile.value.plugins.map((plugin) => ({
+          value: plugin,
+          label: plugin,
+        })),
+      });
+      if (p.isCancel(reference)) continue;
+      const updated = updateProfile(
+        name,
+        { kind: "remove", reference: reference as string },
+        store,
+      );
+      if (updated.ok) p.log.success(`Removed ${reference}.`);
+      else p.log.error(updated.error.message);
+    } else {
+      const confirmed = await p.confirm({
+        message: `Delete profile ${JSON.stringify(name)}?`,
+        initialValue: false,
+      });
+      if (p.isCancel(confirmed) || !confirmed) continue;
+      const removed = removeProfileTemplate(name, store);
+      if (removed.ok) p.log.success(`Removed profile ${JSON.stringify(name)}.`);
+      else p.log.error(removed.error.message);
+    }
+  }
+}
+
+function showPluginCatalog() {
+  const catalog = listCatalogPlugins(
+    createMarketplaceCatalogStore(process.env.HOME!),
+  );
+  if (!catalog.ok) {
+    p.log.error(catalog.error.message);
+    return;
+  }
+  if (catalog.value.length === 0) {
+    p.log.warn("No plugins found in installed marketplaces.");
+    return;
+  }
+  p.note(
+    catalog.value
+      .map((plugin) =>
+        `${plugin.reference}${plugin.description ? ` — ${plugin.description}` : ""}`
+      )
+      .join("\n"),
+    "Plugin catalog",
+  );
+}
+
+async function runInteractiveProjectCommand(args: string[]) {
+  const previousExitCode = process.exitCode;
+  await main(args);
+  process.exitCode = previousExitCode;
 }
 
 async function interactiveMode() {
@@ -755,86 +918,62 @@ async function interactiveMode() {
   }
 
   printBanner();
-
-  let currentProfile: string | undefined;
-
-  // Profile selection loop
   while (true) {
-    currentProfile = await selectProfileOrNew();
-    if (!currentProfile) break;
+    const manifestStore = createManifestStore();
+    const exists = manifestStore.exists(process.cwd());
+    if (!exists.ok) {
+      p.log.error(exists.error.message);
+      return;
+    }
 
-    // Action loop — all operations on current profile
-    let stayInProfile = true;
-    while (stayInProfile && currentProfile) {
-      const data = readProfile(currentProfile);
-      const pluginList = data.plugins.length > 0
-        ? data.plugins.map((pl) => `  ${pc.dim("•")} ${pl}`).join("\n")
-        : pc.dim("  (empty)");
-      p.note(`${pc.bold(pc.cyan(currentProfile))}\n${pluginList}`);
+    if (!exists.value) {
+      p.note(pc.dim("No .ccx.json in the current directory."), "Current project");
       const action = await p.select({
-        message: "Choose action:",
+        message: "Project Plugin Environment:",
         options: [
-          { value: "install", label: "Install", hint: "Install all plugins from profile" },
-          { value: "add", label: "Add plugin", hint: "Add a plugin to profile" },
-          { value: "remove", label: "Remove plugin", hint: "Remove a plugin from profile" },
-          { value: "list", label: "List plugins", hint: "List plugins in current profile" },
-          { value: "search", label: "Search marketplace", hint: "Search plugins in marketplaces" },
-          { value: "init", label: "Init project", hint: "Create .ccx.json for this project" },
-          { value: "sync", label: "Sync project", hint: "Sync .claude/plugins/ to .ccx.json" },
-          { value: "save", label: "Save as profile", hint: "Save .ccx.json plugins to a profile" },
-          { value: "switch", label: "Switch profile", hint: "Choose a different profile" },
-          { value: "delete", label: "Delete profile", hint: "Delete this profile" },
+          { value: "init", label: "Init Project Manifest" },
+          { value: "profiles", label: "Profiles" },
+          { value: "catalog", label: "Plugin catalog" },
           { value: "exit", label: "Exit" },
         ],
       });
-      if (p.isCancel(action) || action === "exit") {
-        currentProfile = undefined;
-        stayInProfile = false;
-        break;
-      }
-
-      switch (action) {
-        case "install":
-          await executeProfile(currentProfile);
-          break;
-        case "add":
-          await addPlugin(currentProfile);
-          break;
-        case "remove":
-          await removePlugin(currentProfile);
-          break;
-        case "list":
-          await listPlugins(currentProfile);
-          break;
-        case "search": {
-          const found = await browsePlugins(currentProfile);
-          if (found.length > 0) {
-            const d = readProfile(currentProfile);
-            d.plugins.push(...found);
-            writeProfile(currentProfile, d);
-            p.log.success(`Added ${found.length} plugin(s) to profile "${currentProfile}".`);
-          }
-          break;
-        }
-        case "init":
-          await initProjectConfig();
-          break;
-        case "sync":
-          syncProjectConfig();
-          break;
-        case "save":
-          await saveToProfile();
-          break;
-        case "switch":
-          stayInProfile = false;
-          break;
-        case "delete":
-          await removeProfile(currentProfile);
-          currentProfile = undefined;
-          stayInProfile = false;
-          break;
-      }
+      if (p.isCancel(action) || action === "exit") break;
+      if (action === "init") await runInteractiveProjectCommand(["project", "init"]);
+      else if (action === "profiles") await interactiveProfiles();
+      else showPluginCatalog();
+      continue;
     }
+
+    const inspection = inspectProject(process.cwd(), {
+      manifestStore,
+      claudePluginClient: createClaudePluginClient(),
+    });
+    if (inspection.ok) {
+      p.note(
+        `${pc.bold("Missing")}\n${renderPluginReferences(inspection.value.missing)}\n\n${pc.bold("Undeclared")}\n${renderPluginReferences(inspection.value.undeclared)}`,
+        "Current project",
+      );
+    } else {
+      p.log.error(inspection.error.message);
+    }
+
+    const action = await p.select({
+      message: "Project Plugin Environment:",
+      options: [
+        { value: "up", label: "Up", hint: "Install missing plugins" },
+        { value: "diff", label: "Diff", hint: "Show Drift" },
+        { value: "import", label: "Import", hint: "Capture Installed State" },
+        { value: "profiles", label: "Profiles" },
+        { value: "catalog", label: "Plugin catalog" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+    if (p.isCancel(action) || action === "exit") break;
+    if (action === "up") await runInteractiveProjectCommand(["project", "up"]);
+    else if (action === "diff") await runInteractiveProjectCommand(["project", "diff"]);
+    else if (action === "import") await runInteractiveProjectCommand(["project", "import"]);
+    else if (action === "profiles") await interactiveProfiles();
+    else showPluginCatalog();
   }
 
   p.outro("Done.");
@@ -845,44 +984,51 @@ function printHelp() {
   const pkg = require("../package.json");
 
   console.log(`${renderLogo()}
-${pc.bold("ccx")} ${pc.dim("- Agent Profile Manager for Claude Code")}  ${pc.gray(`v${pkg.version}`)}
+${pc.bold("ccx")} ${pc.dim("- Project Plugin Environment for Claude Code")}  ${pc.gray(`v${pkg.version}`)}
 
 ${pc.bold("Usage:")}
-  ${pc.cyan("ccx")}                            Interactive mode (TTY)
-  ${pc.cyan("ccx ui")}                         Interactive mode (TTY)
+  ${pc.cyan("ccx")}                                  Project-first interactive mode (TTY)
+  ${pc.cyan("ccx ui")}                               Project-first interactive mode (TTY)
 
 ${pc.bold("Project:")}
-  ${pc.cyan("ccx init")}                       Create .ccx.json for current project
-  ${pc.cyan("ccx sync")}                       Sync installed plugins to .ccx.json
-  ${pc.cyan("ccx install")}                    Install plugins from .ccx.json
-  ${pc.cyan("ccx save")} ${pc.dim("[name]")}                Save .ccx.json as a reusable profile
+  ${pc.cyan("ccx project init")} ${pc.dim("(--empty | --from-profile PROFILE) [--force]")}
+  ${pc.cyan("ccx project up")}                        Install only Missing plugins
+  ${pc.cyan("ccx project diff")}                      Show Missing and Undeclared plugins
+  ${pc.cyan("ccx project import")} ${pc.dim("[--yes]")}            Preview and capture Installed State
+
+${pc.bold("Project aliases:")}
+  ${pc.cyan("ccx init")} ${pc.dim("...")}                           Alias of ccx project init
+  ${pc.cyan("ccx up")}                                 Alias of ccx project up
+  ${pc.cyan("ccx diff")}                               Alias of ccx project diff
 
 ${pc.bold("Profiles:")}
-  ${pc.cyan("ccx create")} ${pc.dim("<name>")}              Create a new profile
-  ${pc.cyan("ccx delete")} ${pc.dim("<name>")}              Delete a profile
-  ${pc.cyan("ccx profiles")}                   List all profiles
+  ${pc.cyan("ccx profile create")} ${pc.dim("[--from-project] NAME")}
+  ${pc.cyan("ccx profile ls")}
+  ${pc.cyan("ccx profile inspect")} ${pc.dim("NAME")}
+  ${pc.cyan("ccx profile update")} ${pc.dim("(--add PLUGIN | --remove PLUGIN) NAME")}
+  ${pc.cyan("ccx profile rm")} ${pc.dim("NAME")}
 
 ${pc.bold("Plugins:")}
-  ${pc.cyan("ccx install")} ${pc.dim("<profile>")}          Install all plugins from a profile
-  ${pc.cyan("ccx add")} ${pc.dim("<profile> <plugin>")}     Add a plugin to a profile
-  ${pc.cyan("ccx remove")} ${pc.dim("<profile> <plugin>")}  Remove a plugin from a profile
-  ${pc.cyan("ccx list")} ${pc.dim("<profile>")}             List plugins in a profile
-  ${pc.cyan("ccx search")} ${pc.dim("<keyword>")}           Search plugins in marketplaces
+  ${pc.cyan("ccx plugin ls")}                         List marketplace plugins
+  ${pc.cyan("ccx plugin search")} ${pc.dim("KEYWORD")}             Search qualified Plugin References
 
 ${pc.bold("Options:")}
-  ${pc.cyan("ccx -v, --version")}              Show version
+  ${pc.cyan("ccx -v, --version")}                    Show version
 
-${pc.dim("Legacy:")}
-  ${pc.dim("ccx <profile>")}                  ${pc.dim("Same as ccx install <profile>")}
-  ${pc.dim("ccx <profile> add [plugin]")}     ${pc.dim("Same as ccx add <profile> <plugin>")}
-  ${pc.dim("ccx <profile> remove [plugin]")}  ${pc.dim("Same as ccx remove <profile> <plugin>")}
-  ${pc.dim("ccx <profile> list")}             ${pc.dim("Same as ccx list <profile>")}
-  ${pc.dim("ccx add <name>")}                 ${pc.dim("Same as ccx create <name>")}
-  ${pc.dim("ccx remove <name>")}              ${pc.dim("Same as ccx delete <name>")}
-  ${pc.dim("ccx list")}                       ${pc.dim("Same as ccx profiles")}`);
+${pc.bold("Exit status:")}
+  ${pc.dim("0 success · 1 usage/runtime/partial failure · 2 Drift found by diff")}
+
+${pc.dim("ccx 0.1 commands remain available with migration warnings in 0.2;")}
+${pc.dim("ambiguous legacy forms are removed in 0.3.")}`);
 }
 
 // ── Main ──────────────────────────────────────────────────
+
+function warnDeprecated(invocation: string, replacement: string) {
+  process.stderr.write(
+    `Deprecated in ccx 0.2: ${invocation}. Use ${replacement}. The ambiguous form will be removed in ccx 0.3.\n`,
+  );
+}
 
 async function main(args: string[]) {
   if (args.length === 0) {
@@ -940,7 +1086,7 @@ async function main(args: string[]) {
     return;
   }
 
-  const projectInitStatus = routeProjectInit(args, {
+  const projectInitStatus = await routeProjectInit(args, {
     initializeEmpty: (force) =>
       initializeEmptyProject(process.cwd(), createManifestStore(), force),
     initializeFromProfile: (profileName, force) =>
@@ -953,6 +1099,35 @@ async function main(args: string[]) {
         },
         force,
       ),
+    isInteractive: canPrompt(),
+    chooseSource: async () => {
+      const names = profileStore.list();
+      if (!names.ok) {
+        process.stderr.write(`${names.error.message}\n`);
+        return undefined;
+      }
+      const source = await p.select({
+        message: "Initialize Project Manifest:",
+        options: [
+          { value: "__empty__", label: "Empty manifest" },
+          ...names.value.map((name) => ({
+            value: name,
+            label: `From profile: ${name}`,
+          })),
+        ],
+      });
+      if (p.isCancel(source)) return undefined;
+      return source === "__empty__"
+        ? { kind: "empty" as const }
+        : { kind: "profile" as const, name: source as string };
+    },
+    confirmOverwrite: async () => {
+      const overwrite = await p.confirm({
+        message: ".ccx.json already exists. Overwrite?",
+        initialValue: false,
+      });
+      return !p.isCancel(overwrite) && overwrite;
+    },
     writeStdout: (output) => process.stdout.write(output),
     writeStderr: (output) => process.stderr.write(output),
   });
@@ -961,7 +1136,7 @@ async function main(args: string[]) {
     return;
   }
 
-  const projectImportStatus = routeProjectImport(args, {
+  const projectImportStatus = await routeProjectImport(args, {
     projectRoot: process.cwd(),
     prepare: (projectRoot) =>
       prepareProjectImport(projectRoot, {
@@ -971,6 +1146,13 @@ async function main(args: string[]) {
     commit: (projectRoot, preview) =>
       commitProjectImport(projectRoot, preview, createManifestStore()),
     isInteractive: canPrompt(),
+    confirm: async () => {
+      const confirmed = await p.confirm({
+        message: "Write this Installed State to .ccx.json?",
+        initialValue: false,
+      });
+      return !p.isCancel(confirmed) && confirmed;
+    },
     writeStdout: (output) => process.stdout.write(output),
     writeStderr: (output) => process.stderr.write(output),
   });
@@ -1012,83 +1194,177 @@ async function main(args: string[]) {
   const cmd = args[0];
 
   switch (cmd) {
-    case "init":
-      await initProjectConfig();
-      break;
-
-    case "sync":
-      syncProjectConfig();
-      break;
+    case "sync": {
+      warnDeprecated("ccx sync", "ccx project import --yes");
+      const status = await routeProjectImport(
+        ["project", "import", "--yes"],
+        {
+          projectRoot: process.cwd(),
+          prepare: (projectRoot) =>
+            prepareProjectImport(projectRoot, {
+              manifestStore: createManifestStore(),
+              claudePluginClient: createClaudePluginClient(),
+            }),
+          commit: (projectRoot, preview) =>
+            commitProjectImport(projectRoot, preview, createManifestStore()),
+          isInteractive: canPrompt(),
+          writeStdout: (output) => process.stdout.write(output),
+          writeStderr: (output) => process.stderr.write(output),
+        },
+      );
+      process.exitCode = status;
+      return;
+    }
 
     case "save":
+      warnDeprecated(
+        `ccx save${args[1] ? ` ${args[1]}` : ""}`,
+        `ccx profile create --from-project${args[1] ? ` ${args[1]}` : " NAME"}`,
+      );
       await saveToProfile(args[1]);
       break;
 
-    case "ui":
     case "tui":
     case "interactive":
+      warnDeprecated(`ccx ${cmd}`, "ccx ui");
       await interactiveMode();
       break;
 
-    case "install":
-      if (!args[1]) {
-        await executeProjectConfig();
-        return;
-      }
-      await executeProfile(args[1]);
+    case "ui":
+      await interactiveMode();
       break;
 
+    case "install": {
+      if (!args[1]) {
+        warnDeprecated("ccx install", "ccx project up");
+        const status = routeProjectUp(["project", "up"], {
+          projectRoot: process.cwd(),
+          apply: (projectRoot) =>
+            applyProject(projectRoot, {
+              manifestStore: createManifestStore(),
+              claudePluginClient: createClaudePluginClient(),
+            }),
+          writeStdout: (output) => process.stdout.write(output),
+          writeStderr: (output) => process.stderr.write(output),
+        });
+        process.exitCode = status;
+        return;
+      }
+      warnDeprecated(
+        `ccx install ${args[1]}`,
+        `ccx project init --from-profile ${args[1]} && ccx project up`,
+      );
+      await executeProfile(args[1]);
+      break;
+    }
+
     case "create":
+      warnDeprecated(
+        `ccx create${args[1] ? ` ${args[1]}` : ""}`,
+        `ccx profile create${args[1] ? ` ${args[1]}` : " NAME"}`,
+      );
       await addProfile(args[1]);
       break;
 
     case "delete":
+      warnDeprecated(
+        `ccx delete${args[1] ? ` ${args[1]}` : ""}`,
+        `ccx profile rm${args[1] ? ` ${args[1]}` : " NAME"}`,
+      );
       await removeProfile(args[1]);
       break;
 
     case "profiles":
+      warnDeprecated("ccx profiles", "ccx profile ls");
       await listProfiles();
       break;
 
     case "add":
       if (args[2]) {
+        warnDeprecated(
+          `ccx add ${args[1]} ${args[2]}`,
+          `ccx profile update --add ${args[2]} ${args[1]}`,
+        );
         await addPlugin(args[1], args[2]);
       } else {
+        warnDeprecated(
+          `ccx add${args[1] ? ` ${args[1]}` : ""}`,
+          `ccx profile create${args[1] ? ` ${args[1]}` : " NAME"}`,
+        );
         await addProfile(args[1]);
       }
       break;
 
     case "remove":
       if (args[2]) {
+        warnDeprecated(
+          `ccx remove ${args[1]} ${args[2]}`,
+          `ccx profile update --remove ${args[2]} ${args[1]}`,
+        );
         await removePlugin(args[1], args[2]);
       } else {
+        warnDeprecated(
+          `ccx remove${args[1] ? ` ${args[1]}` : ""}`,
+          `ccx profile rm${args[1] ? ` ${args[1]}` : " NAME"}`,
+        );
         await removeProfile(args[1]);
       }
       break;
 
     case "list":
       if (args[1]) {
+        warnDeprecated(
+          `ccx list ${args[1]}`,
+          `ccx profile inspect ${args[1]}`,
+        );
         await listPlugins(args[1]);
       } else {
+        warnDeprecated("ccx list", "ccx profile ls");
         await listProfiles();
       }
       break;
 
     case "search":
+      warnDeprecated(
+        `ccx search${args[1] ? ` ${args[1]}` : ""}`,
+        `ccx plugin search${args[1] ? ` ${args[1]}` : " KEYWORD"}`,
+      );
       await browsePlugins();
       break;
 
     default: {
+      if (cmd === "project") {
+        console.error(`Unknown project command: ccx ${args.join(" ")}`);
+        console.error("Usage: ccx project <init|up|diff|import> ...");
+        process.exitCode = 1;
+        return;
+      }
       const profileName = cmd;
       const sub = args[1];
 
       if (!sub) {
+        warnDeprecated(
+          `ccx ${profileName}`,
+          `ccx project init --from-profile ${profileName} && ccx project up`,
+        );
         await executeProfile(profileName);
       } else if (sub === "add") {
+        warnDeprecated(
+          `ccx ${profileName} add${args[2] ? ` ${args[2]}` : ""}`,
+          `ccx profile update --add${args[2] ? ` ${args[2]}` : " PLUGIN"} ${profileName}`,
+        );
         await addPlugin(profileName, args[2]);
       } else if (sub === "remove") {
+        warnDeprecated(
+          `ccx ${profileName} remove${args[2] ? ` ${args[2]}` : ""}`,
+          `ccx profile update --remove${args[2] ? ` ${args[2]}` : " PLUGIN"} ${profileName}`,
+        );
         await removePlugin(profileName, args[2]);
       } else if (sub === "list") {
+        warnDeprecated(
+          `ccx ${profileName} list`,
+          `ccx profile inspect ${profileName}`,
+        );
         await listPlugins(profileName);
       } else {
         console.error(`Unknown command: ccx ${args.join(" ")}`);

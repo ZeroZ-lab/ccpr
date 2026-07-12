@@ -147,24 +147,130 @@ withHome((home) => {
   const result = run(["search", "plugin"], home);
   assert.equal(result.status, 0);
   assert.match(result.stdout + result.stderr, /Skipping invalid marketplace/);
+  assert.match(result.stderr, /Use ccx plugin search plugin/);
 });
 
 withHome((home) => {
-  assert.equal(run(["create", "dev"], home).status, 0);
+  const created = run(["create", "dev"], home);
+  assert.equal(created.status, 0);
+  assert.match(created.stderr, /Use ccx profile create dev/);
 
   const profiles = run(["profiles"], home);
   assert.equal(profiles.status, 0);
   assert.match(profiles.stdout + profiles.stderr, /dev\s+\(0 plugins\)/);
+  assert.match(profiles.stderr, /Use ccx profile ls/);
 
-  assert.equal(run(["add", "dev", "plugin-a"], home).status, 0);
+  const added = run(["add", "dev", "plugin-a"], home);
+  assert.equal(added.status, 0);
+  assert.match(
+    added.stderr,
+    /Use ccx profile update --add plugin-a dev/,
+  );
 
   const plugins = run(["list", "dev"], home);
   assert.equal(plugins.status, 0);
   assert.match(plugins.stdout + plugins.stderr, /plugin-a/);
+  assert.match(plugins.stderr, /Use ccx profile inspect dev/);
 
   const legacyPlugins = run(["dev", "list"], home);
   assert.equal(legacyPlugins.status, 0);
   assert.match(legacyPlugins.stdout + legacyPlugins.stderr, /plugin-a/);
+  assert.match(legacyPlugins.stderr, /Use ccx profile inspect dev/);
+
+  const legacyAdded = run(["dev", "add", "plugin-b"], home);
+  assert.equal(legacyAdded.status, 0);
+  assert.match(
+    legacyAdded.stderr,
+    /Use ccx profile update --add plugin-b dev/,
+  );
+
+  const removedTopLevel = run(["remove", "dev", "plugin-a"], home);
+  assert.equal(removedTopLevel.status, 0);
+  assert.match(
+    removedTopLevel.stderr,
+    /Use ccx profile update --remove plugin-a dev/,
+  );
+
+  const removedPlugin = run(["dev", "remove", "plugin-b"], home);
+  assert.equal(removedPlugin.status, 0);
+  assert.match(
+    removedPlugin.stderr,
+    /Use ccx profile update --remove plugin-b dev/,
+  );
+
+  const directProfile = run(["dev"], home);
+  assert.equal(directProfile.status, 0);
+  assert.match(directProfile.stderr, /Use ccx project init --from-profile dev/);
+
+  const installedProfile = run(["install", "dev"], home);
+  assert.equal(installedProfile.status, 0);
+  assert.match(
+    installedProfile.stderr,
+    /Use ccx project init --from-profile dev.*ccx project up/,
+  );
+
+  const createdByAlias = run(["add", "personal"], home);
+  assert.equal(createdByAlias.status, 0);
+  assert.match(createdByAlias.stderr, /Use ccx profile create personal/);
+  const removedByAlias = run(["remove", "personal"], home);
+  assert.equal(removedByAlias.status, 0);
+  assert.match(removedByAlias.stderr, /Use ccx profile rm personal/);
+
+  const listedByAlias = run(["list"], home);
+  assert.equal(listedByAlias.status, 0);
+  assert.match(listedByAlias.stderr, /Use ccx profile ls/);
+
+  const deleted = run(["delete", "dev"], home);
+  assert.equal(deleted.status, 0);
+  assert.match(deleted.stderr, /Use ccx profile rm dev/);
+});
+
+withHome((home) => {
+  for (const alias of ["tui", "interactive"]) {
+    const result = run([alias], home);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`Deprecated.*ccx ${alias}`));
+    assert.match(result.stderr, /Use ccx ui/);
+  }
+
+  const unknownProject = run(["project"], home);
+  assert.equal(unknownProject.status, 1);
+  assert.match(unknownProject.stderr, /Usage: ccx project/);
+  assert.doesNotMatch(unknownProject.stderr, /Profile "project" not found/);
+
+  for (const object of ["profile", "plugin"]) {
+    const result = run([object], home);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`Usage: ccx ${object}`));
+    assert.doesNotMatch(result.stderr, new RegExp(`Profile "${object}"`));
+  }
+});
+
+withHome((home) => {
+  const profileDir = path.join(home, ".ccx", "profiles");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(profileDir, "legacy-install.json"),
+    JSON.stringify({
+      name: "legacy-install",
+      plugins: ["formatter@official"],
+    }),
+  );
+  const claude = installFakeClaude(
+    home,
+    { stdout: "[]" },
+    { "formatter@official": { status: 0 } },
+  );
+  const result = run(
+    ["install", "legacy-install"],
+    home,
+    undefined,
+    claude.env,
+  );
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout, "Installed formatter@official\n1 installed\n");
+  assert.doesNotMatch(result.stdout + result.stderr, /\u001b\[/);
 });
 
 // ── Project config tests (.ccx.json) ─────────────────────
@@ -212,6 +318,31 @@ withHome((home) => {
     assert.deepEqual(claude.readCalls(), [
       { args: ["plugin", "list", "--json"], cwd: fs.realpathSync(cwd) },
     ]);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+withHome((home) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-sync-"));
+  try {
+    fs.writeFileSync(
+      path.join(cwd, ".ccx.json"),
+      JSON.stringify({ plugins: ["old@official"] }),
+    );
+    const claude = installFakeClaude(home, {
+      stdout: JSON.stringify([
+        { id: "new@official", scope: "project", projectPath: cwd },
+      ]),
+    });
+    const result = run(["sync"], home, cwd, claude.env);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /Use ccx project import --yes/);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(cwd, ".ccx.json"), "utf8")),
+      { plugins: ["new@official"] },
+    );
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
@@ -820,9 +951,11 @@ withHome((home) => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccx-project-"));
   try {
     fs.writeFileSync(path.join(cwd, ".ccx.json"), JSON.stringify({ plugins: [] }));
-    const result = run(["install"], home, cwd);
+    const claude = installFakeClaude(home, { stdout: "[]" });
+    const result = run(["install"], home, cwd, claude.env);
     assert.equal(result.status, 0);
-    assert.match(result.stdout + result.stderr, /No plugins in \.ccx\.json/);
+    assert.match(result.stdout, /Missing:\n  \(none\)/);
+    assert.match(result.stderr, /Use ccx project up/);
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
@@ -845,7 +978,14 @@ withHome((home) => {
   assert.equal(result.status, 0);
   assert.match(result.stdout + result.stderr, /______ ______ __   __/);
   assert.match(result.stdout + result.stderr, /ccx init/);
-  assert.match(result.stdout + result.stderr, /Install plugins from \.ccx\.json/);
+  assert.match(result.stdout, /Project Plugin Environment/);
+  assert.match(result.stdout, /ccx project up/);
+  assert.match(result.stdout, /2 Drift found by diff/);
+  assert.match(result.stdout, /v0\.2\.0/);
+
+  const version = run(["--version"], home);
+  assert.equal(version.status, 0);
+  assert.equal(version.stdout, "ccx v0.2.0\n");
 });
 
 // ── ccx save tests ─────────────────────────────────────────
@@ -892,6 +1032,10 @@ withHome((home) => {
     const result = run(["save", "my-profile"], home, cwd);
     assert.equal(result.status, 0);
     assert.match(result.stdout + result.stderr, /Saved 2 plugin\(s\)/);
+    assert.match(
+      result.stderr,
+      /Use ccx profile create --from-project my-profile/,
+    );
 
     const profile = JSON.parse(fs.readFileSync(path.join(home, ".ccx", "profiles", "my-profile.json"), "utf-8"));
     assert.deepEqual(profile.plugins, ["plugin-a", "plugin-b"]);
